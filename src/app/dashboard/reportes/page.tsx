@@ -119,11 +119,11 @@ export default function ReportesPage() {
     }
     return colors[estado] || 'bg-gray-100 text-gray-800'
   }
-
+  /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
   }
-
+  */
   if (loading) {
     return (
       <DashboardLayout>

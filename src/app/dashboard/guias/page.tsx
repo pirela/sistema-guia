@@ -85,10 +85,11 @@ export default function GuiasPage() {
   const guiasFiltradas = filtroEstado === 'todos' 
     ? guias 
     : guias.filter(g => g.estado === filtroEstado)
-
+  /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
   }
+  */
 
   if (loading) {
     return (

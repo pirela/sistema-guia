@@ -211,11 +211,11 @@ export default function UsuariosPage() {
     administrador: usuarios.filter(u => u.rol === 'administrador').length,
     motorizado: usuarios.filter(u => u.rol === 'motorizado').length,
   }
-
+  /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
   }
-
+  */
   if (loading) {
     return (
       <DashboardLayout>

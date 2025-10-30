@@ -178,11 +178,11 @@ export default function ProductosPage() {
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     p.codigo_sku?.toLowerCase().includes(busqueda.toLowerCase())
   )
-
+  /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
   }
-
+  */
   if (loading) {
     return (
       <DashboardLayout>

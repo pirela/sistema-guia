@@ -176,11 +176,11 @@ export default function CrearGuiaPage() {
       setLoading(false)
     }
   }
-
+  /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
   }
-
+  */
   return (
     <DashboardLayout>
       <div className="max-w-4xl mx-auto">

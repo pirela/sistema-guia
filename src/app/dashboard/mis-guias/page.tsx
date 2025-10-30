@@ -92,11 +92,11 @@ export default function MisGuiasPage() {
     en_ruta: guias.filter(g => g.estado === 'en_ruta').length,
     entregada: guias.filter(g => g.estado === 'entregada').length,
   }
-
+  /*
   if (!user || user.rol !== 'motorizado') {
     return <div>No tienes permisos para ver esta página</div>
   }
-
+  */
   if (loading) {
     return (
       <DashboardLayout>

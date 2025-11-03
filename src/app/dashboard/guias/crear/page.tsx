@@ -168,7 +168,7 @@ export default function CrearGuiaPage() {
 
       clearCache('guias')
       alert('Guía creada exitosamente')
-      router.push('/dashboard/guias')
+      //router.push('/dashboard/guias')
     } catch (error: any) {
       console.error('Error creando guía:', error)
       alert('Error al crear guía: ' + error.message)

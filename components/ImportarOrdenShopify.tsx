@@ -39,10 +39,11 @@ export default function ImportarOrdenShopify() {
       if (response.ok) {
         setMensaje({ tipo: 'success', texto: data.mensaje })
         setOrderNumber('')
-        
+        /*
         setTimeout(() => {
           router.push(`/dashboard/guias/${data.guia.id}`)
         }, 1500)
+        */
       } else {
         setMensaje({ tipo: 'error', texto: data.error })
       }

@@ -20,6 +20,7 @@ export function useAuth() {
           await fetchUserData(session.user.id)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
+          setLoading(false)
           clearCache()
           router.push('/auth/login')
         }
@@ -62,8 +63,11 @@ export function useAuth() {
 
       if (result.error) throw result.error
       setUser(result.data)
+      setLoading(false)
     } catch (error) {
       console.error('Error fetching user data:', error)
+      setUser(null)
+      setLoading(false)
       await supabase.auth.signOut()
     }
   }

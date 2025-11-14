@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Usuario } from '@/types/database'
@@ -10,8 +10,13 @@ export function useAuth() {
   const [user, setUser] = useState<Usuario | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
+  const checkingRef = useRef(false)
+  const fetchingRef = useRef(false)
 
   useEffect(() => {
+    if (checkingRef.current) return
+    checkingRef.current = true
+    
     checkUser()
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
@@ -29,24 +34,46 @@ export function useAuth() {
 
     return () => {
       authListener.subscription.unsubscribe()
+      checkingRef.current = false
     }
-  }, [router])
+  }, [])
 
   const checkUser = async () => {
+    // Timeout de seguridad: si después de 10 segundos aún está cargando, forzar setLoading(false)
+    const timeoutId = setTimeout(() => {
+      console.warn('Timeout en checkUser, forzando loading a false')
+      setLoading(false)
+    }, 10000)
+
     try {
       const { data: { session } } = await supabase.auth.getSession()
       
       if (session) {
         await fetchUserData(session.user.id)
+      } else {
+        setLoading(false)
       }
     } catch (error) {
       console.error('Error checking user:', error)
+      setLoading(false)
     } finally {
+      clearTimeout(timeoutId)
+      // Asegurar que loading siempre se setee a false
       setLoading(false)
     }
   }
 
   const fetchUserData = async (userId: string) => {
+    if (fetchingRef.current) return
+    fetchingRef.current = true
+    
+    // Timeout de seguridad para fetchUserData
+    const timeoutId = setTimeout(() => {
+      console.warn('Timeout en fetchUserData, forzando loading a false')
+      setLoading(false)
+      fetchingRef.current = false
+    }, 10000)
+    
     try {
       const result = await cachedFetch(
         `user-${userId}`,
@@ -58,17 +85,35 @@ export function useAuth() {
             .eq('activo', true)
             .eq('eliminado', false)
             .single()
-        }
+        },
+        60000 // 60 segundos de caché para datos de usuario
       )
 
       if (result.error) throw result.error
       setUser(result.data)
       setLoading(false)
-    } catch (error) {
+      clearTimeout(timeoutId)
+    } catch (error: any) {
       console.error('Error fetching user data:', error)
+      clearTimeout(timeoutId)
+      
+      // Si es rate limit, esperar antes de hacer signOut
+      if (error?.code === 'over_request_rate_limit' || error?.message?.includes('rate limit')) {
+        console.warn('Rate limit alcanzado, esperando antes de reintentar...')
+        await new Promise(resolve => setTimeout(resolve, 5000))
+      }
+      
       setUser(null)
       setLoading(false)
-      await supabase.auth.signOut()
+      
+      // Solo hacer signOut si no es rate limit
+      if (error?.code !== 'over_request_rate_limit' && !error?.message?.includes('rate limit')) {
+        await supabase.auth.signOut()
+      }
+    } finally {
+      fetchingRef.current = false
+      // Asegurar que loading siempre se setee a false
+      setLoading(false)
     }
   }
 

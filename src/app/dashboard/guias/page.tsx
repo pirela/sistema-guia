@@ -9,19 +9,41 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import GenerarPDFGuias from '@/components/GenerarPDFGuias'
 
+interface GuiaConInfo extends Guia {
+  cantidad_novedades?: number
+  ultimo_usuario_id?: string | null
+  ultimo_usuario_novedad_id?: string | null
+}
+
 export default function GuiasPage() {
-  const { user } = useAuth()
-  const [guias, setGuias] = useState<Guia[]>([])
+  const { user, loading: authLoading } = useAuth()
+  const [guias, setGuias] = useState<GuiaConInfo[]>([])
   const [motorizados, setMotorizados] = useState<{ [key: string]: Usuario }>({})
+  const [usuarios, setUsuarios] = useState<{ [key: string]: Usuario }>({})
   const [loading, setLoading] = useState(true)
   const [filtroEstado, setFiltroEstado] = useState<string>('todos')
 
   useEffect(() => {
-    if (user?.rol === 'administrador') {
+    if (!authLoading && user?.rol === 'administrador') {
       fetchGuias()
       fetchMotorizados()
+      fetchUsuarios()
+    } else if (!authLoading && !user) {
+      setLoading(false)
     }
-  }, [user])
+  }, [user, authLoading])
+
+  // Timeout de seguridad: si después de 15 segundos aún está cargando, forzar setLoading(false)
+  useEffect(() => {
+    if (loading && !authLoading) {
+      const timeoutId = setTimeout(() => {
+        console.warn('Timeout en guias, forzando loading a false')
+        setLoading(false)
+      }, 15000)
+
+      return () => clearTimeout(timeoutId)
+    }
+  }, [loading, authLoading])
 
   const fetchGuias = async () => {
     try {
@@ -37,7 +59,52 @@ export default function GuiasPage() {
       )
 
       if (result.error) throw result.error
-      setGuias(result.data || [])
+      const guiasData = result.data || []
+
+      // Obtener conteo de novedades y último usuario que modificó para cada guía
+      const guiasConInfo = await Promise.all(
+        guiasData.map(async (guia: Guia) => {
+          // Contar novedades
+          const { count: novedadesCount } = await supabase
+            .from('novedades')
+            .select('*', { count: 'exact', head: true })
+            .eq('guia_id', guia.id)
+
+          // Obtener última novedad para saber quién la creó
+          const { data: ultimaNovedadData } = await supabase
+            .from('novedades')
+            .select('usuario_id')
+            .eq('guia_id', guia.id)
+            .order('fecha_creacion', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+          // Obtener último usuario que creó una novedad
+          const ultimoUsuarioNovedadId = ultimaNovedadData?.usuario_id || null
+
+          // Obtener último usuario que modificó desde historial_estado
+          const { data: ultimoHistorialData } = await supabase
+            .from('historial_estado')
+            .select('usuario_id')
+            .eq('guia_id', guia.id)
+            .order('fecha_cambio', { ascending: false })
+            .limit(1)
+
+          // Usar el usuario del historial o null si no hay
+          const usuarioIdModifico = ultimoHistorialData && ultimoHistorialData.length > 0 
+            ? ultimoHistorialData[0].usuario_id 
+            : null
+
+          return {
+            ...guia,
+            cantidad_novedades: novedadesCount || 0,
+            ultimo_usuario_id: usuarioIdModifico,
+            ultimo_usuario_novedad_id: ultimoUsuarioNovedadId,
+          }
+        })
+      )
+
+      setGuias(guiasConInfo)
     } catch (error) {
       console.error('Error fetching guias:', error)
     } finally {
@@ -70,6 +137,30 @@ export default function GuiasPage() {
     }
   }
 
+  const fetchUsuarios = async () => {
+    try {
+      const result = await cachedFetch(
+        'usuarios-todos',
+        async () => {
+          return await supabase
+            .from('usuarios')
+            .select('*')
+            .eq('eliminado', false)
+        }
+      )
+
+      if (result.error) throw result.error
+      
+      const usuariosMap: { [key: string]: Usuario } = {}
+      result.data?.forEach((u) => {
+        usuariosMap[u.id] = u
+      })
+      setUsuarios(usuariosMap)
+    } catch (error) {
+      console.error('Error fetching usuarios:', error)
+    }
+  }
+
   const getEstadoColor = (estado: string) => {
     const colors: { [key: string]: string } = {
       pendiente: 'bg-gray-100 text-gray-800',
@@ -78,6 +169,7 @@ export default function GuiasPage() {
       entregada: 'bg-green-100 text-green-800',
       cancelada: 'bg-red-100 text-red-800',
       rechazada: 'bg-orange-100 text-orange-800',
+      novedad: 'bg-purple-100 text-purple-800',
     }
     return colors[estado] || 'bg-gray-100 text-gray-800'
   }
@@ -91,10 +183,14 @@ export default function GuiasPage() {
   }
   */
 
-  if (loading) {
+  // Mostrar loading solo si auth está cargando o si estamos cargando datos iniciales
+  if (authLoading || loading) {
     return (
       <DashboardLayout>
-        <div className="text-center">Cargando guías...</div>
+        <div className="text-center py-12">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
+          <div className="text-gray-600">Cargando guías...</div>
+        </div>
       </DashboardLayout>
     )
   }
@@ -130,6 +226,7 @@ export default function GuiasPage() {
             <option value="asignada">Asignada</option>
             <option value="en_ruta">En Ruta</option>
             <option value="entregada">Entregada</option>
+            <option value="novedad">Novedad</option>
             <option value="cancelada">Cancelada</option>
             <option value="rechazada">Rechazada</option>
           </select>
@@ -158,6 +255,9 @@ export default function GuiasPage() {
                   Fecha
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Novedades
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones
                 </th>
               </tr>
@@ -165,7 +265,7 @@ export default function GuiasPage() {
             <tbody className="bg-white divide-y divide-gray-200">
               {guiasFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={8} className="px-6 py-4 text-center text-gray-500">
                     No hay guías registradas
                   </td>
                 </tr>
@@ -191,6 +291,22 @@ export default function GuiasPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {new Date(guia.fecha_creacion).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <div className="flex flex-col gap-1">
+                        {guia.cantidad_novedades ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-pink-100 text-pink-800 w-fit">
+                            {guia.cantidad_novedades}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">0</span>
+                        )}
+                        {guia.ultimo_usuario_novedad_id && usuarios[guia.ultimo_usuario_novedad_id] && (
+                          <span className="text-xs text-gray-500">
+                            Por: {usuarios[guia.ultimo_usuario_novedad_id].nombre}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <Link
@@ -242,6 +358,25 @@ export default function GuiasPage() {
                     <div>
                       <p className="text-xs text-gray-500">Fecha</p>
                       <p className="text-sm text-gray-900">{new Date(guia.fecha_creacion).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                  <div className="flex justify-between">
+                    <div>
+                      <p className="text-xs text-gray-500">Novedades</p>
+                      {guia.cantidad_novedades ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-pink-100 text-pink-800 w-fit">
+                            {guia.cantidad_novedades}
+                          </span>
+                          {guia.ultimo_usuario_novedad_id && usuarios[guia.ultimo_usuario_novedad_id] && (
+                            <p className="text-xs text-gray-500">
+                              Por: {usuarios[guia.ultimo_usuario_novedad_id].nombre}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-400">0</p>
+                      )}
                     </div>
                   </div>
                 </div>

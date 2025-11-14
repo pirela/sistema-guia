@@ -1,5 +1,5 @@
 export type RolUsuario = 'administrador' | 'motorizado'
-export type EstadoGuia = 'pendiente' | 'asignada' | 'en_ruta' | 'entregada' | 'finalizada' | 'cancelada' | 'rechazada'
+export type EstadoGuia = 'pendiente' | 'asignada' | 'en_ruta' | 'entregada' | 'finalizada' | 'cancelada' | 'rechazada' | 'novedad'
 
 export interface Usuario {
   id: string
@@ -58,4 +58,12 @@ export interface HistorialEstado {
   usuario_id: string | null
   comentario: string | null
   fecha_cambio: string
+}
+
+export interface Novedad {
+  id: string
+  guia_id: string
+  usuario_id: string
+  comentario: string
+  fecha_creacion: string
 }

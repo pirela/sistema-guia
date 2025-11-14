@@ -2,53 +2,277 @@
 
 import { cachedFetch, clearCache } from '@/lib/supabase-cache'
 import DashboardLayout from '@/components/DashboardLayout'
+import ModalComentarioNovedad from '@/components/ModalComentarioNovedad'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
-import { Guia } from '@/types/database'
-import { useEffect, useState } from 'react'
+import { Guia, Producto, EstadoGuia, Usuario } from '@/types/database'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import Link from 'next/link'
 
+interface GuiaProducto {
+  id: string
+  guia_id: string
+  producto_id: string
+  cantidad: number
+  precio_unitario: number
+  producto: Producto
+}
+
+interface GuiaConProductos extends Guia {
+  productos?: GuiaProducto[]
+  cantidad_novedades?: number
+  ultimo_usuario_novedad_id?: string | null
+}
+
+const REGISTROS_POR_PAGINA = 20
+
 export default function MisGuiasPage() {
-  const { user } = useAuth()
-  const [guias, setGuias] = useState<Guia[]>([])
+  const { user, loading: authLoading } = useAuth()
+  const [guias, setGuias] = useState<GuiaConProductos[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [filtroEstado, setFiltroEstado] = useState<string>('todas')
+  const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
+  const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>('')
+  const [hasMore, setHasMore] = useState(true)
+  const [offset, setOffset] = useState(0)
+  const [totalGuias, setTotalGuias] = useState(0)
+  const [usuarios, setUsuarios] = useState<{ [key: string]: Usuario }>({})
+  const observerTarget = useRef<HTMLDivElement>(null)
+  
+  // Estados para modal de novedad
+  const [modalNovedad, setModalNovedad] = useState({
+    isOpen: false,
+    guiaId: '',
+    estadoAnterior: null as EstadoGuia | null,
+    estadoNuevo: null as EstadoGuia | null,
+    loading: false,
+  })
 
-  useEffect(() => {
-    if (user?.rol === 'motorizado') {
-      fetchMisGuias()
-    }
-  }, [user])
+  const fetchMisGuias = useCallback(async (pageOffset: number = 0, reset: boolean = false) => {
+    if (!user?.id) return
 
-  const fetchMisGuias = async () => {
     try {
-      const result = await cachedFetch(
-        `mis-guias-${user?.id}`,
-        async () => {
-          return await supabase
-            .from('guias')
-            .select('*')
-            .eq('motorizado_asignado', user?.id)
-            .eq('eliminado', false)
-            .order('fecha_creacion', { ascending: false })
-        },
-        15000
-      )
+      if (reset) {
+        setLoading(true)
+      } else {
+        setLoadingMore(true)
+      }
+
+      // Construir query base
+      let query = supabase
+        .from('guias')
+        .select('*', { count: 'exact' })
+        .eq('motorizado_asignado', user.id)
+        .eq('eliminado', false)
+
+      // Aplicar filtro de estado si no es 'todas'
+      if (filtroEstado !== 'todas') {
+        query = query.eq('estado', filtroEstado)
+      }
+
+      // Aplicar filtro de fecha desde
+      if (filtroFechaDesde) {
+        query = query.gte('fecha_creacion', filtroFechaDesde + 'T00:00:00.000Z')
+      }
+
+      // Aplicar filtro de fecha hasta
+      if (filtroFechaHasta) {
+        query = query.lte('fecha_creacion', filtroFechaHasta + 'T23:59:59.999Z')
+      }
+
+      // Aplicar paginación
+      const result = await query
+        .order('fecha_creacion', { ascending: false })
+        .range(pageOffset, pageOffset + REGISTROS_POR_PAGINA - 1)
 
       if (result.error) throw result.error
-      setGuias(result.data || [])
+
+      const guiasData = result.data || []
+      const total = result.count || 0
+
+      setTotalGuias(total)
+
+      // Verificar si hay más registros
+      const nextOffset = pageOffset + REGISTROS_POR_PAGINA
+      setHasMore(nextOffset < total)
+
+      // Obtener productos y novedades para cada guía
+      const guiasConProductos = await Promise.all(
+        guiasData.map(async (guia: Guia) => {
+          const productosResult = await cachedFetch(
+            `guia-productos-${guia.id}`,
+            async () => {
+              return await supabase
+                .from('guias_productos')
+                .select(`
+                  *,
+                  producto:productos(*)
+                `)
+                .eq('guia_id', guia.id)
+            },
+            15000
+          )
+
+          // Contar novedades
+          const { count: novedadesCount } = await supabase
+            .from('novedades')
+            .select('*', { count: 'exact', head: true })
+            .eq('guia_id', guia.id)
+
+          // Obtener última novedad para saber quién la creó
+          const { data: ultimaNovedadData } = await supabase
+            .from('novedades')
+            .select('usuario_id')
+            .eq('guia_id', guia.id)
+            .order('fecha_creacion', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+          const ultimoUsuarioNovedadId = ultimaNovedadData?.usuario_id || null
+
+          return {
+            ...guia,
+            productos: productosResult.data as GuiaProducto[] || [],
+            cantidad_novedades: novedadesCount || 0,
+            ultimo_usuario_novedad_id: ultimoUsuarioNovedadId,
+          }
+        })
+      )
+
+      if (reset) {
+        setGuias(guiasConProductos)
+      } else {
+        setGuias(prev => [...prev, ...guiasConProductos])
+      }
+
+      setOffset(nextOffset)
     } catch (error) {
       console.error('Error fetching mis guias:', error)
     } finally {
       setLoading(false)
+      setLoadingMore(false)
+    }
+  }, [user?.id, filtroEstado, filtroFechaDesde, filtroFechaHasta])
+
+  const loadMoreGuias = useCallback(() => {
+    if (!loadingMore && hasMore && user?.id) {
+      fetchMisGuias(offset, false)
+    }
+  }, [offset, loadingMore, hasMore, user?.id, fetchMisGuias])
+
+  const fetchUsuarios = async () => {
+    try {
+      const result = await cachedFetch(
+        'usuarios-todos',
+        async () => {
+          return await supabase
+            .from('usuarios')
+            .select('*')
+            .eq('eliminado', false)
+        }
+      )
+
+      if (result.error) throw result.error
+      
+      const usuariosMap: { [key: string]: Usuario } = {}
+      result.data?.forEach((u) => {
+        usuariosMap[u.id] = u
+      })
+      setUsuarios(usuariosMap)
+    } catch (error) {
+      console.error('Error fetching usuarios:', error)
     }
   }
 
-  const actualizarEstado = async (guiaId: string, nuevoEstado: string) => {
-    if (!confirm(`¿Confirmar cambio de estado a "${nuevoEstado}"?`)) return
+  // Cargar usuarios al inicio
+  useEffect(() => {
+    if (!authLoading && user) {
+      fetchUsuarios()
+    }
+  }, [user, authLoading])
 
+  // Resetear cuando cambia el filtro o cuando user está disponible
+  useEffect(() => {
+    if (!authLoading && user?.rol === 'motorizado') {
+      setGuias([])
+      setOffset(0)
+      setHasMore(true)
+      fetchMisGuias(0, true)
+    } else if (!authLoading && !user) {
+      // Si no hay usuario después de que auth termine de cargar, resetear loading
+      setLoading(false)
+    }
+  }, [user, authLoading, filtroEstado, filtroFechaDesde, filtroFechaHasta, fetchMisGuias])
+
+  // Timeout de seguridad: si después de 15 segundos aún está cargando, forzar setLoading(false)
+  useEffect(() => {
+    if (loading && !authLoading) {
+      const timeoutId = setTimeout(() => {
+        console.warn('Timeout en mis-guias, forzando loading a false')
+        setLoading(false)
+      }, 15000)
+
+      return () => clearTimeout(timeoutId)
+    }
+  }, [loading, authLoading])
+
+  // Intersection Observer para infinite scroll
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
+          loadMoreGuias()
+        }
+      },
+      { threshold: 0.1 }
+    )
+
+    const currentTarget = observerTarget.current
+    if (currentTarget) {
+      observer.observe(currentTarget)
+    }
+
+    return () => {
+      if (currentTarget) {
+        observer.unobserve(currentTarget)
+      }
+    }
+  }, [hasMore, loadingMore, loading, loadMoreGuias])
+
+  const actualizarEstado = async (guiaId: string, nuevoEstado: EstadoGuia) => {
+    // Buscar la guía actual para obtener su estado
+    const guiaActual = guias.find(g => g.id === guiaId)
+    const estadoAnterior = guiaActual?.estado || null
+
+    // Verificar si necesita comentario (cambiar a novedad o desde novedad)
+    const necesitaComentario = nuevoEstado === 'novedad' || estadoAnterior === 'novedad'
+
+    if (necesitaComentario) {
+      // Mostrar modal para pedir comentario
+      setModalNovedad({
+        isOpen: true,
+        guiaId,
+        estadoAnterior,
+        estadoNuevo: nuevoEstado,
+        loading: false,
+      })
+    } else {
+      // Cambio normal, confirmar y proceder
+      if (!confirm(`¿Confirmar cambio de estado a "${nuevoEstado}"?`)) return
+      await ejecutarCambioEstado(guiaId, nuevoEstado, estadoAnterior, '')
+    }
+  }
+
+  const ejecutarCambioEstado = async (
+    guiaId: string,
+    nuevoEstado: EstadoGuia,
+    estadoAnterior: EstadoGuia | null,
+    comentario: string
+  ) => {
     try {
-      const { error } = await supabase
+      // Actualizar estado de la guía
+      const { error: errorGuia } = await supabase
         .from('guias')
         .update({ 
           estado: nuevoEstado,
@@ -57,17 +281,61 @@ export default function MisGuiasPage() {
         })
         .eq('id', guiaId)
 
-      if (error) throw error
+      if (errorGuia) throw errorGuia
+
+      // Si hay comentario, guardar en tabla novedades
+      if (comentario.trim() && user?.id) {
+        const { error: errorNovedad } = await supabase
+          .from('novedades')
+          .insert({
+            guia_id: guiaId,
+            usuario_id: user.id,
+            comentario: comentario.trim(),
+            fecha_creacion: new Date().toISOString(),
+          })
+
+        if (errorNovedad) {
+          console.error('Error guardando novedad:', errorNovedad)
+          // No lanzar error, solo loguear, porque el cambio de estado ya se hizo
+        }
+      }
       
       clearCache(`mis-guias-${user?.id}`)
       clearCache(`guia-${guiaId}`)
       clearCache(`guia-historial-${guiaId}`)
-      fetchMisGuias()
+      clearCache(`guia-novedades-${guiaId}`)
+      
+      // Refrescar contadores y recargar guías
+      fetchContadores().then(setContadores)
+      setGuias([])
+      setOffset(0)
+      setHasMore(true)
+      fetchMisGuias(0, true)
+      
       alert('Estado actualizado correctamente')
     } catch (error) {
       console.error('Error actualizando estado:', error)
       alert('Error al actualizar estado')
     }
+  }
+
+  const handleConfirmarNovedad = async (comentario: string) => {
+    setModalNovedad(prev => ({ ...prev, loading: true }))
+    
+    await ejecutarCambioEstado(
+      modalNovedad.guiaId,
+      modalNovedad.estadoNuevo!,
+      modalNovedad.estadoAnterior,
+      comentario
+    )
+
+    setModalNovedad({
+      isOpen: false,
+      guiaId: '',
+      estadoAnterior: null,
+      estadoNuevo: null,
+      loading: false,
+    })
   }
 
   const getEstadoColor = (estado: string) => {
@@ -78,29 +346,79 @@ export default function MisGuiasPage() {
       entregada: 'bg-green-100 text-green-800',
       cancelada: 'bg-red-100 text-red-800',
       rechazada: 'bg-orange-100 text-orange-800',
+      novedad: 'bg-pink-100 text-pink-800',
     }
     return colors[estado] || 'bg-gray-100 text-gray-800'
   }
 
-  const guiasFiltradas = filtroEstado === 'todas' 
-    ? guias 
-    : guias.filter(g => g.estado === filtroEstado)
+  // Obtener contadores totales (sin paginación)
+  const fetchContadores = async (): Promise<{ todas: number; asignada: number; en_ruta: number; entregada: number; novedad: number }> => {
+    if (!user?.id) return { todas: 0, asignada: 0, en_ruta: 0, entregada: 0, novedad: 0 }
 
-  const contadores = {
-    todas: guias.length,
-    asignada: guias.filter(g => g.estado === 'asignada').length,
-    en_ruta: guias.filter(g => g.estado === 'en_ruta').length,
-    entregada: guias.filter(g => g.estado === 'entregada').length,
+    try {
+      const estados = ['asignada', 'en_ruta', 'entregada', 'novedad'] as const
+      const contadores: { todas: number; asignada: number; en_ruta: number; entregada: number; novedad: number } = { 
+        todas: 0, 
+        asignada: 0, 
+        en_ruta: 0, 
+        entregada: 0, 
+        novedad: 0 
+      }
+
+      // Contar todas
+      const { count: total } = await supabase
+        .from('guias')
+        .select('*', { count: 'exact', head: true })
+        .eq('motorizado_asignado', user.id)
+        .eq('eliminado', false)
+
+      contadores.todas = total || 0
+
+      // Contar por estado
+      for (const estado of estados) {
+        const { count } = await supabase
+          .from('guias')
+          .select('*', { count: 'exact', head: true })
+          .eq('motorizado_asignado', user.id)
+          .eq('estado', estado)
+          .eq('eliminado', false)
+
+        contadores[estado] = count || 0
+      }
+
+      return contadores
+    } catch (error) {
+      console.error('Error fetching contadores:', error)
+      return { todas: 0, asignada: 0, en_ruta: 0, entregada: 0, novedad: 0 }
+    }
   }
+
+  const [contadores, setContadores] = useState({
+    todas: 0,
+    asignada: 0,
+    en_ruta: 0,
+    entregada: 0,
+    novedad: 0,
+  })
+
+  useEffect(() => {
+    if (user?.rol === 'motorizado') {
+      fetchContadores().then(setContadores)
+    }
+  }, [user])
   /*
   if (!user || user.rol !== 'motorizado') {
     return <div>No tienes permisos para ver esta página</div>
   }
   */
-  if (loading) {
+  // Mostrar loading solo si auth está cargando o si estamos cargando datos iniciales
+  if (authLoading || (loading && guias.length === 0)) {
     return (
       <DashboardLayout>
-        <div className="text-center">Cargando guías...</div>
+        <div className="text-center py-12">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
+          <div className="text-gray-600">Cargando guías...</div>
+        </div>
       </DashboardLayout>
     )
   }
@@ -113,63 +431,124 @@ export default function MisGuiasPage() {
           <p className="text-sm sm:text-base text-gray-600 mt-1">Gestiona tus entregas</p>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
-          <button
-            onClick={() => setFiltroEstado('todas')}
-            className={`p-3 sm:p-4 rounded-lg text-center transition-all ${
-              filtroEstado === 'todas' 
-                ? 'bg-blue-600 text-white shadow-lg' 
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <p className="text-xl sm:text-2xl font-bold">{contadores.todas}</p>
-            <p className="text-xs sm:text-sm">Todas</p>
-          </button>
-          <button
-            onClick={() => setFiltroEstado('asignada')}
-            className={`p-3 sm:p-4 rounded-lg text-center transition-all ${
-              filtroEstado === 'asignada' 
-                ? 'bg-blue-600 text-white shadow-lg' 
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <p className="text-xl sm:text-2xl font-bold">{contadores.asignada}</p>
-            <p className="text-xs sm:text-sm">Asignadas</p>
-          </button>
-          <button
-            onClick={() => setFiltroEstado('en_ruta')}
-            className={`p-3 sm:p-4 rounded-lg text-center transition-all ${
-              filtroEstado === 'en_ruta' 
-                ? 'bg-yellow-600 text-white shadow-lg' 
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <p className="text-xl sm:text-2xl font-bold">{contadores.en_ruta}</p>
-            <p className="text-xs sm:text-sm">En Ruta</p>
-          </button>
-          <button
-            onClick={() => setFiltroEstado('entregada')}
-            className={`p-3 sm:p-4 rounded-lg text-center transition-all ${
-              filtroEstado === 'entregada' 
-                ? 'bg-green-600 text-white shadow-lg' 
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <p className="text-xl sm:text-2xl font-bold">{contadores.entregada}</p>
-            <p className="text-xs sm:text-sm">Entregadas</p>
-          </button>
+        {/* Filtros Minimalistas */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+            {/* Filtro por Estado - Minimalista */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500 whitespace-nowrap">Estado:</span>
+              <div className="flex gap-1 flex-wrap">
+                <button
+                  onClick={() => setFiltroEstado('todas')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'todas' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Todas ({contadores.todas})
+                </button>
+                <button
+                  onClick={() => setFiltroEstado('asignada')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'asignada' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Asignadas ({contadores.asignada})
+                </button>
+                <button
+                  onClick={() => setFiltroEstado('en_ruta')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'en_ruta' 
+                      ? 'bg-yellow-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  En Ruta ({contadores.en_ruta})
+                </button>
+                <button
+                  onClick={() => setFiltroEstado('entregada')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'entregada' 
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Entregadas ({contadores.entregada})
+                </button>
+                <button
+                  onClick={() => setFiltroEstado('novedad')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'novedad' 
+                      ? 'bg-pink-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Novedad ({contadores.novedad})
+                </button>
+              </div>
+            </div>
+
+            {/* Filtro por Fecha */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500 whitespace-nowrap">Fecha:</span>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="date"
+                  value={filtroFechaDesde}
+                  onChange={(e) => setFiltroFechaDesde(e.target.value)}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Desde"
+                />
+                <span className="text-xs text-gray-400">-</span>
+                <input
+                  type="date"
+                  value={filtroFechaHasta}
+                  onChange={(e) => setFiltroFechaHasta(e.target.value)}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Hasta"
+                />
+                {(filtroFechaDesde || filtroFechaHasta) && (
+                  <button
+                    onClick={() => {
+                      setFiltroFechaDesde('')
+                      setFiltroFechaHasta('')
+                    }}
+                    className="px-2 py-1 text-xs text-gray-600 hover:text-gray-800"
+                    title="Limpiar fechas"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Contador Total */}
+        <div className="flex items-center justify-end">
+          <div className="bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
+            <p className="text-xs text-blue-600">Total: <span className="font-bold text-blue-700">{totalGuias}</span></p>
+          </div>
         </div>
 
         <div className="space-y-3 sm:space-y-4">
-          {guiasFiltradas.length === 0 ? (
+          {loading && guias.length === 0 ? (
+            <div className="text-center text-gray-500 py-8 bg-white rounded-lg">
+              Cargando guías...
+            </div>
+          ) : guias.length === 0 ? (
             <div className="text-center text-gray-500 py-8 bg-white rounded-lg">
               No hay guías {filtroEstado !== 'todas' && `en estado "${filtroEstado}"`}
             </div>
           ) : (
-            guiasFiltradas.map((guia) => (
+            <>
+              {guias.map((guia) => (
               <div key={guia.id} className="bg-white rounded-lg shadow p-4 sm:p-6 space-y-3 sm:space-y-4">
-                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
-                  <div>
+                <div className="flex items-stretch justify-between gap-3">
+                  <div className="flex flex-col">
                     <h3 className="text-base sm:text-lg font-bold text-gray-800">
                       {guia.numero_guia}
                     </h3>
@@ -177,7 +556,7 @@ export default function MisGuiasPage() {
                       {new Date(guia.fecha_creacion).toLocaleDateString()}
                     </p>
                   </div>
-                  <span className={`px-3 py-1 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)} whitespace-nowrap`}>
+                  <span className={`px-3 py-2 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)} whitespace-nowrap flex items-center justify-center`}>
                     {guia.estado}
                   </span>
                 </div>
@@ -188,6 +567,46 @@ export default function MisGuiasPage() {
                     <p className="sm:w-40"><span className="font-semibold">Tel:</span> {guia.telefono_cliente}</p>
                   </div>
                   <p><span className="font-semibold">Dirección:</span> {guia.direccion}</p>
+                  
+                  {/* Productos */}
+                  {guia.productos && guia.productos.length > 0 && (
+                    <div className="bg-gray-50 p-3 rounded-md">
+                      <p className="font-semibold text-xs sm:text-sm mb-2 text-gray-700">Productos a entregar:</p>
+                      <div className="space-y-1">
+                        {guia.productos.map((gp) => (
+                          <div key={gp.id} className="flex justify-between items-center text-xs sm:text-sm">
+                            <span className="text-gray-700">
+                              {gp.producto?.nombre || 'Producto no encontrado'}
+                            </span>
+                            <span className="font-semibold text-gray-900">
+                              x{gp.cantidad}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Novedades */}
+                  {guia.cantidad_novedades !== undefined && guia.cantidad_novedades > 0 && (
+                    <div className="bg-pink-50 p-3 rounded-md border border-pink-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-xs sm:text-sm mb-1 text-pink-700">Novedades:</p>
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-pink-100 text-pink-800">
+                            {guia.cantidad_novedades} {guia.cantidad_novedades === 1 ? 'novedad' : 'novedades'}
+                          </span>
+                        </div>
+                        {guia.ultimo_usuario_novedad_id && usuarios[guia.ultimo_usuario_novedad_id] && (
+                          <p className="text-xs text-pink-600">
+                            Última por:<br />
+                            <span className="font-semibold">{usuarios[guia.ultimo_usuario_novedad_id].nombre}</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
                   <p className="text-base sm:text-lg font-bold text-green-600">
                     Monto: ${guia.monto_recaudar.toFixed(2)}
                   </p>
@@ -200,12 +619,20 @@ export default function MisGuiasPage() {
 
                 <div className="flex flex-col sm:flex-row gap-2">
                   {guia.estado === 'asignada' && (
-                    <button
-                      onClick={() => actualizarEstado(guia.id, 'en_ruta')}
-                      className="flex-1 bg-yellow-600 text-white py-2.5 sm:py-2 text-sm rounded-md hover:bg-yellow-700 font-medium"
-                    >
-                      🚚 Iniciar Ruta
-                    </button>
+                    <>
+                      <button
+                        onClick={() => actualizarEstado(guia.id, 'en_ruta')}
+                        className="flex-1 bg-yellow-600 text-white py-2.5 sm:py-2 text-sm rounded-md hover:bg-yellow-700 font-medium"
+                      >
+                        🚚 Iniciar Ruta
+                      </button>
+                      <button
+                        onClick={() => actualizarEstado(guia.id, 'novedad')}
+                        className="flex-1 bg-pink-600 text-white py-2.5 sm:py-2 text-sm rounded-md hover:bg-pink-700 font-medium"
+                      >
+                        ⚠️ Reportar Novedad
+                      </button>
+                    </>
                   )}
                   {guia.estado === 'en_ruta' && (
                     <>
@@ -221,7 +648,19 @@ export default function MisGuiasPage() {
                       >
                         ✗ Rechazada
                       </button>
+                      <button
+                        onClick={() => actualizarEstado(guia.id, 'novedad')}
+                        className="flex-1 bg-pink-600 text-white py-2.5 sm:py-2 text-sm rounded-md hover:bg-pink-700 font-medium"
+                      >
+                        ⚠️ Reportar Novedad
+                      </button>
                     </>
+                  )}
+                  {guia.estado === 'novedad' && (
+                    <div className="w-full bg-yellow-50 border border-yellow-200 text-yellow-800 py-3 px-4 rounded-md text-sm">
+                      <p className="font-medium">⚠️ Guía en estado Novedad</p>
+                      <p className="text-xs mt-1">Solo un administrador puede cambiar el estado de esta guía.</p>
+                    </div>
                   )}
                   <Link
                     href={`/dashboard/guias/${guia.id}`}
@@ -231,10 +670,41 @@ export default function MisGuiasPage() {
                   </Link>
                 </div>
               </div>
-            ))
+              ))}
+
+              {/* Indicador de carga y trigger para infinite scroll */}
+              <div ref={observerTarget} className="py-4">
+                {loadingMore && (
+                  <div className="text-center text-gray-500 py-4">
+                    <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900"></div>
+                    <p className="mt-2 text-sm">Cargando más guías...</p>
+                  </div>
+                )}
+                {!hasMore && guias.length > 0 && (
+                  <div className="text-center text-gray-500 py-4 text-sm">
+                    No hay más guías para mostrar
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
+
+      {/* Modal de Comentario para Novedad */}
+      <ModalComentarioNovedad
+        isOpen={modalNovedad.isOpen}
+        onClose={() => setModalNovedad(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={handleConfirmarNovedad}
+        titulo={
+          modalNovedad.estadoNuevo === 'novedad'
+            ? 'Reportar Novedad'
+            : 'Resolver Novedad'
+        }
+        estadoAnterior={modalNovedad.estadoAnterior}
+        estadoNuevo={modalNovedad.estadoNuevo || undefined}
+        loading={modalNovedad.loading}
+      />
     </DashboardLayout>
   )
 }

@@ -22,7 +22,17 @@ export default function LoginPage() {
         password,
       })
 
-      if (authError) throw authError
+      if (authError) {
+        // Manejo especial para rate limit
+        if (authError.code === 'over_request_rate_limit' || authError.message?.includes('rate limit')) {
+          setError('Demasiados intentos. Por favor espera unos segundos antes de intentar nuevamente.')
+          // Esperar 5 segundos antes de permitir otro intento
+          await new Promise(resolve => setTimeout(resolve, 5000))
+        } else {
+          throw authError
+        }
+        return
+      }
 
       router.push('/dashboard')
     } catch (err: any) {
@@ -83,6 +93,9 @@ export default function LoginPage() {
             {loading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
           </button>
         </form>
+        <div className='flex justify-center mt-4'>
+          <span className="text-xs text-gray-500 text-center"> Versión 13-11-2025 </span>
+        </div>
       </div>
     </div>
   )

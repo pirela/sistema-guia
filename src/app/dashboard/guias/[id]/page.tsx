@@ -420,12 +420,13 @@ export default function DetalleGuiaPage() {
   }
 
   if (!guia) {
+    const rutaVolver = user?.rol === 'administrador' ? '/dashboard/guias' : '/dashboard/mis-guias'
     return (
       <DashboardLayout>
         <div className="text-center py-12">
           <p className="text-gray-600">Guía no encontrada</p>
           <button
-            onClick={() => router.push('/dashboard/guias')}
+            onClick={() => router.push(rutaVolver)}
             className="mt-4 text-blue-600 hover:text-blue-800"
           >
             Volver a guías
@@ -435,13 +436,15 @@ export default function DetalleGuiaPage() {
     )
   }
 
+  const rutaVolver = user?.rol === 'administrador' ? '/dashboard/guias' : '/dashboard/mis-guias'
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <button
-              onClick={() => router.push('/dashboard/guias')}
+              onClick={() => router.push(rutaVolver)}
               className="text-blue-600 hover:text-blue-800 mb-2 text-sm"
             >
               ← Volver a guías

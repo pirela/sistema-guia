@@ -26,14 +26,41 @@ interface GuiaConProductos extends Guia {
 
 const REGISTROS_POR_PAGINA = 20
 
+const LOCALIDADES = [
+  'Usaquén',
+  'Chapinero',
+  'Santa Fe',
+  'San Cristóbal',
+  'Usme',
+  'Tunjuelito',
+  'Bosa',
+  'Kennedy',
+  'Fontibón',
+  'Engativá',
+  'Suba',
+  'Barrios Unidos',
+  'Teusaquillo',
+  'Los Mártires',
+  'Antonio Nariño',
+  'Puente Aranda',
+  'La Candelaria',
+  'Rafael Uribe Uribe',
+  'Ciudad Bolívar',
+  'Sumapaz',
+  'SIN LOCALIDAD'
+]
+
 export default function MisGuiasPage() {
   const { user, loading: authLoading } = useAuth()
   const [guias, setGuias] = useState<GuiaConProductos[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [filtroEstado, setFiltroEstado] = useState<string>('todas')
+  const [filtroEstado, setFiltroEstado] = useState<string>('asignada')
   const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
   const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>('')
+  const [filtroLocalidades, setFiltroLocalidades] = useState<string[]>([])
+  const [mostrarFiltroLocalidades, setMostrarFiltroLocalidades] = useState(false)
+  const filtroLocalidadesRef = useRef<HTMLDivElement>(null)
   const [hasMore, setHasMore] = useState(true)
   const [offset, setOffset] = useState(0)
   const [totalGuias, setTotalGuias] = useState(0)
@@ -82,13 +109,49 @@ export default function MisGuiasPage() {
       }
 
       // Aplicar paginación
+      // Nota: El filtro de localidades se aplica en el cliente después de obtener los datos
+      // porque Supabase no soporta fácilmente OR con múltiples condiciones ilike
       const result = await query
         .order('fecha_creacion', { ascending: false })
         .range(pageOffset, pageOffset + REGISTROS_POR_PAGINA - 1)
 
       if (result.error) throw result.error
 
-      const guiasData = result.data || []
+      let guiasData = result.data || []
+      
+      // Aplicar filtro de localidades en el cliente
+      if (filtroLocalidades.length > 0) {
+        const tieneSinLocalidad = filtroLocalidades.includes('SIN LOCALIDAD')
+        const localidadesNormales = filtroLocalidades.filter(l => l !== 'SIN LOCALIDAD')
+        const todasLasLocalidades = LOCALIDADES.filter(l => l !== 'SIN LOCALIDAD')
+        
+        guiasData = guiasData.filter(guia => {
+          const direccionUpper = (guia.direccion || '').toUpperCase()
+          
+          if (tieneSinLocalidad && localidadesNormales.length > 0) {
+            // Si hay "SIN LOCALIDAD" y otras localidades: OR
+            // La guía debe contener alguna localidad normal O no contener ninguna localidad
+            const contieneLocalidadNormal = localidadesNormales.some(loc => 
+              direccionUpper.includes(loc.toUpperCase())
+            )
+            const noContieneNingunaLocalidad = !todasLasLocalidades.some(loc => 
+              direccionUpper.includes(loc.toUpperCase())
+            )
+            return contieneLocalidadNormal || noContieneNingunaLocalidad
+          } else if (tieneSinLocalidad) {
+            // Solo "SIN LOCALIDAD": la guía NO debe contener ninguna localidad
+            return !todasLasLocalidades.some(loc => 
+              direccionUpper.includes(loc.toUpperCase())
+            )
+          } else {
+            // Solo localidades normales: la guía debe contener al menos una de las localidades seleccionadas
+            return localidadesNormales.some(loc => 
+              direccionUpper.includes(loc.toUpperCase())
+            )
+          }
+        })
+      }
+      
       const total = result.count || 0
 
       setTotalGuias(total)
@@ -153,7 +216,7 @@ export default function MisGuiasPage() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [user?.id, filtroEstado, filtroFechaDesde, filtroFechaHasta])
+  }, [user?.id, filtroEstado, filtroFechaDesde, filtroFechaHasta, filtroLocalidades])
 
   const loadMoreGuias = useCallback(() => {
     if (!loadingMore && hasMore && user?.id) {
@@ -192,6 +255,23 @@ export default function MisGuiasPage() {
     }
   }, [user, authLoading])
 
+  // Cerrar el dropdown de filtro de localidades al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (filtroLocalidadesRef.current && !filtroLocalidadesRef.current.contains(event.target as Node)) {
+        setMostrarFiltroLocalidades(false)
+      }
+    }
+
+    if (mostrarFiltroLocalidades) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [mostrarFiltroLocalidades])
+
   // Resetear cuando cambia el filtro o cuando user está disponible
   useEffect(() => {
     if (!authLoading && user?.rol === 'motorizado') {
@@ -203,7 +283,7 @@ export default function MisGuiasPage() {
       // Si no hay usuario después de que auth termine de cargar, resetear loading
       setLoading(false)
     }
-  }, [user, authLoading, filtroEstado, filtroFechaDesde, filtroFechaHasta, fetchMisGuias])
+  }, [user, authLoading, filtroEstado, filtroFechaDesde, filtroFechaHasta, filtroLocalidades, fetchMisGuias])
 
   // Timeout de seguridad: si después de 15 segundos aún está cargando, forzar setLoading(false)
   useEffect(() => {
@@ -401,11 +481,81 @@ export default function MisGuiasPage() {
     novedad: 0,
   })
 
+  const [contadoresLocalidades, setContadoresLocalidades] = useState<{ [key: string]: number }>({})
+
+  // Obtener contadores por localidad
+  const fetchContadoresLocalidades = useCallback(async (): Promise<{ [key: string]: number }> => {
+    if (!user?.id) return {}
+
+    try {
+      // Obtener todas las guías del motorizado (sin paginación, pero respetando filtros de fecha y estado)
+      let query = supabase
+        .from('guias')
+        .select('direccion')
+        .eq('motorizado_asignado', user.id)
+        .eq('eliminado', false)
+
+      // Aplicar filtro de estado si no es 'todas'
+      if (filtroEstado !== 'todas') {
+        query = query.eq('estado', filtroEstado)
+      }
+
+      // Aplicar filtro de fecha desde
+      if (filtroFechaDesde) {
+        query = query.gte('fecha_creacion', filtroFechaDesde + 'T00:00:00.000Z')
+      }
+
+      // Aplicar filtro de fecha hasta
+      if (filtroFechaHasta) {
+        query = query.lte('fecha_creacion', filtroFechaHasta + 'T23:59:59.999Z')
+      }
+
+      const { data: guiasData, error } = await query
+
+      if (error) throw error
+
+      const contadores: { [key: string]: number } = {}
+      const todasLasLocalidades = LOCALIDADES.filter(l => l !== 'SIN LOCALIDAD')
+
+      // Inicializar contadores
+      LOCALIDADES.forEach(localidad => {
+        contadores[localidad] = 0
+      })
+
+      // Contar por localidad
+      if (guiasData) {
+        guiasData.forEach(guia => {
+          const direccionUpper = (guia.direccion || '').toUpperCase()
+          let encontrada = false
+
+          // Buscar en cada localidad normal
+          todasLasLocalidades.forEach(localidad => {
+            if (direccionUpper.includes(localidad.toUpperCase())) {
+              contadores[localidad]++
+              encontrada = true
+            }
+          })
+
+          // Si no se encontró ninguna localidad, cuenta como "SIN LOCALIDAD"
+          if (!encontrada) {
+            contadores['SIN LOCALIDAD']++
+          }
+        })
+      }
+
+      return contadores
+    } catch (error) {
+      console.error('Error fetching contadores localidades:', error)
+      return {}
+    }
+  }, [user?.id, filtroEstado, filtroFechaDesde, filtroFechaHasta])
+
   useEffect(() => {
     if (user?.rol === 'motorizado') {
       fetchContadores().then(setContadores)
+      fetchContadoresLocalidades().then(setContadoresLocalidades)
     }
-  }, [user])
+  }, [user, fetchContadoresLocalidades])
   /*
   if (!user || user.rol !== 'motorizado') {
     return <div>No tienes permisos para ver esta página</div>
@@ -524,7 +674,105 @@ export default function MisGuiasPage() {
                 )}
               </div>
             </div>
+
+            {/* Filtro por Localidad */}
+            <div className="flex items-center gap-2 flex-wrap relative" ref={filtroLocalidadesRef}>
+              <span className="text-xs text-gray-500 whitespace-nowrap">Localidad:</span>
+              <button
+                type="button"
+                onClick={() => setMostrarFiltroLocalidades(!mostrarFiltroLocalidades)}
+                className="px-2 py-1 text-xs border border-gray-300 rounded bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500 flex items-center gap-1"
+              >
+                <span>
+                  {filtroLocalidades.length === 0 
+                    ? 'Todas' 
+                    : filtroLocalidades.length === 1 
+                    ? filtroLocalidades[0] 
+                    : `${filtroLocalidades.length} seleccionadas`}
+                </span>
+                <svg
+                  className={`w-3 h-3 text-gray-500 transition-transform ${mostrarFiltroLocalidades ? 'transform rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              {mostrarFiltroLocalidades && (
+                <div className="absolute z-20 top-full left-0 mt-1 w-64 bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-auto">
+                  <div className="p-2 space-y-1">
+                    {LOCALIDADES.map((localidad) => (
+                      <label
+                        key={localidad}
+                        className="flex items-center justify-between space-x-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer"
+                      >
+                        <div className="flex items-center space-x-2 flex-1">
+                          <input
+                            type="checkbox"
+                            checked={filtroLocalidades.includes(localidad)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setFiltroLocalidades([...filtroLocalidades, localidad])
+                              } else {
+                                setFiltroLocalidades(filtroLocalidades.filter(l => l !== localidad))
+                              }
+                            }}
+                            className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-xs text-gray-700">{localidad}</span>
+                        </div>
+                        <span className="text-xs text-gray-500 font-medium">
+                          ({contadoresLocalidades[localidad] || 0})
+                        </span>
+                      </label>
+                    ))}
+                    {filtroLocalidades.length > 0 && (
+                      <div className="pt-1.5 border-t border-gray-200 mt-1">
+                        <button
+                          type="button"
+                          onClick={() => setFiltroLocalidades([])}
+                          className="w-full text-xs text-blue-600 hover:text-blue-800 text-center py-1"
+                        >
+                          Limpiar filtros
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {filtroLocalidades.length > 0 && (
+                <button
+                  onClick={() => setFiltroLocalidades([])}
+                  className="px-2 py-1 text-xs text-gray-600 hover:text-gray-800"
+                  title="Limpiar localidades"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
+          {filtroLocalidades.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-gray-200">
+              {filtroLocalidades.map((localidad) => (
+                <span
+                  key={localidad}
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                >
+                  {localidad}
+                  <button
+                    type="button"
+                    onClick={() => setFiltroLocalidades(filtroLocalidades.filter(l => l !== localidad))}
+                    className="ml-1.5 text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Contador Total */}

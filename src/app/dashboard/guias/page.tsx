@@ -5,7 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
 import { Guia, Usuario } from '@/types/database'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import GenerarPDFGuias from '@/components/GenerarPDFGuias'
 
@@ -21,40 +21,78 @@ export default function GuiasPage() {
   const [motorizados, setMotorizados] = useState<{ [key: string]: Usuario }>({})
   const [usuarios, setUsuarios] = useState<{ [key: string]: Usuario }>({})
   const [loading, setLoading] = useState(true)
-  const [filtroEstado, setFiltroEstado] = useState<string>('todos')
+  const [filtroEstado, setFiltroEstado] = useState<string[]>([])
+  const [filtroNombreCliente, setFiltroNombreCliente] = useState<string>('')
+  const [mostrarFiltroEstado, setMostrarFiltroEstado] = useState(false)
+  const [filtroNombreClienteDebounced, setFiltroNombreClienteDebounced] = useState<string>('')
+  const filtroEstadoRef = useRef<HTMLDivElement>(null)
+  
+  // Obtener fecha de hoy en formato YYYY-MM-DD para el input date
+  const hoy = new Date().toISOString().split('T')[0]
+  const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
+  const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>(hoy)
 
+  // Debounce para el filtro de nombre del cliente
   useEffect(() => {
-    if (!authLoading && user?.rol === 'administrador') {
-      fetchGuias()
-      fetchMotorizados()
-      fetchUsuarios()
-    } else if (!authLoading && !user) {
-      setLoading(false)
-    }
-  }, [user, authLoading])
+    const timer = setTimeout(() => {
+      setFiltroNombreClienteDebounced(filtroNombreCliente)
+    }, 500) // Esperar 500ms después de que el usuario deje de escribir
 
-  // Timeout de seguridad: si después de 15 segundos aún está cargando, forzar setLoading(false)
+    return () => clearTimeout(timer)
+  }, [filtroNombreCliente])
+
+  // Cerrar el dropdown de filtro de estado al hacer clic fuera
   useEffect(() => {
-    if (loading && !authLoading) {
-      const timeoutId = setTimeout(() => {
-        console.warn('Timeout en guias, forzando loading a false')
-        setLoading(false)
-      }, 15000)
-
-      return () => clearTimeout(timeoutId)
+    const handleClickOutside = (event: MouseEvent) => {
+      if (filtroEstadoRef.current && !filtroEstadoRef.current.contains(event.target as Node)) {
+        setMostrarFiltroEstado(false)
+      }
     }
-  }, [loading, authLoading])
 
-  const fetchGuias = async () => {
+    if (mostrarFiltroEstado) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [mostrarFiltroEstado])
+
+  const fetchGuias = useCallback(async () => {
     try {
+      setLoading(true)
+      let query = supabase
+        .from('guias')
+        .select('*')
+        .eq('eliminado', false)
+
+      // Aplicar filtro por nombre del cliente si existe
+      if (filtroNombreClienteDebounced.trim()) {
+        query = query.ilike('nombre_cliente', `%${filtroNombreClienteDebounced.trim()}%`)
+      }
+
+      // Aplicar filtro por fecha desde
+      if (filtroFechaDesde) {
+        // Incluir todo el día desde (00:00:00)
+        const fechaDesdeInicio = new Date(filtroFechaDesde)
+        fechaDesdeInicio.setHours(0, 0, 0, 0)
+        query = query.gte('fecha_creacion', fechaDesdeInicio.toISOString())
+      }
+
+      // Aplicar filtro por fecha hasta
+      if (filtroFechaHasta) {
+        // Incluir todo el día hasta (23:59:59)
+        const fechaHastaFin = new Date(filtroFechaHasta)
+        fechaHastaFin.setHours(23, 59, 59, 999)
+        query = query.lte('fecha_creacion', fechaHastaFin.toISOString())
+      }
+
+      query = query.order('fecha_creacion', { ascending: false })
+
       const result = await cachedFetch(
-        'guias',
+        `guias-${filtroNombreClienteDebounced}-${filtroFechaDesde}-${filtroFechaHasta}`,
         async () => {
-          return await supabase
-            .from('guias')
-            .select('*')
-            .eq('eliminado', false)
-            .order('fecha_creacion', { ascending: false })
+          return await query
         }
       )
 
@@ -110,7 +148,30 @@ export default function GuiasPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filtroNombreClienteDebounced, filtroFechaDesde, filtroFechaHasta])
+
+  useEffect(() => {
+    if (!authLoading && user?.rol === 'administrador') {
+      fetchGuias()
+      fetchMotorizados()
+      fetchUsuarios()
+    } else if (!authLoading && !user) {
+      setLoading(false)
+    }
+  }, [user, authLoading, fetchGuias])
+
+  // Timeout de seguridad: si después de 15 segundos aún está cargando, forzar setLoading(false)
+  useEffect(() => {
+    if (loading && !authLoading) {
+      const timeoutId = setTimeout(() => {
+        console.warn('Timeout en guias, forzando loading a false')
+        setLoading(false)
+      }, 15000)
+
+      return () => clearTimeout(timeoutId)
+    }
+  }, [loading, authLoading])
+
 
   const fetchMotorizados = async () => {
     try {
@@ -174,9 +235,9 @@ export default function GuiasPage() {
     return colors[estado] || 'bg-gray-100 text-gray-800'
   }
 
-  const guiasFiltradas = filtroEstado === 'todos' 
+  const guiasFiltradas = filtroEstado.length === 0
     ? guias 
-    : guias.filter(g => g.estado === filtroEstado)
+    : guias.filter(g => filtroEstado.includes(g.estado))
   /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
@@ -212,24 +273,153 @@ export default function GuiasPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Filtrar por estado:
-          </label>
-          <select
-            value={filtroEstado}
-            onChange={(e) => setFiltroEstado(e.target.value)}
-            className="w-full sm:w-auto px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="todos">Todos</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="asignada">Asignada</option>
-            <option value="en_ruta">En Ruta</option>
-            <option value="entregada">Entregada</option>
-            <option value="novedad">Novedad</option>
-            <option value="cancelada">Cancelada</option>
-            <option value="rechazada">Rechazada</option>
-          </select>
+        <div className="bg-white rounded-lg shadow p-4 space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Filtrar por nombre del cliente:
+              </label>
+              <input
+                type="text"
+                value={filtroNombreCliente}
+                onChange={(e) => setFiltroNombreCliente(e.target.value)}
+                placeholder="Escribe el nombre del cliente..."
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="sm:w-64 relative" ref={filtroEstadoRef}>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Filtrar por estado:
+              </label>
+              <button
+                type="button"
+                onClick={() => setMostrarFiltroEstado(!mostrarFiltroEstado)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-left flex justify-between items-center"
+              >
+                <span className="text-gray-700">
+                  {filtroEstado.length === 0 
+                    ? 'Todos los estados' 
+                    : filtroEstado.length === 1 
+                    ? filtroEstado[0] 
+                    : `${filtroEstado.length} estados seleccionados`}
+                </span>
+                <svg
+                  className={`w-5 h-5 text-gray-500 transition-transform ${mostrarFiltroEstado ? 'transform rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              {mostrarFiltroEstado && (
+                <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
+                  <div className="p-2 space-y-2">
+                    {[
+                      { value: 'pendiente', label: 'Pendiente' },
+                      { value: 'asignada', label: 'Asignada' },
+                      { value: 'en_ruta', label: 'En Ruta' },
+                      { value: 'entregada', label: 'Entregada' },
+                      { value: 'novedad', label: 'Novedad' },
+                      { value: 'cancelada', label: 'Cancelada' },
+                      { value: 'rechazada', label: 'Rechazada' },
+                    ].map((estado) => (
+                      <label
+                        key={estado.value}
+                        className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={filtroEstado.includes(estado.value)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFiltroEstado([...filtroEstado, estado.value])
+                            } else {
+                              setFiltroEstado(filtroEstado.filter(e => e !== estado.value))
+                            }
+                          }}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700">{estado.label}</span>
+                      </label>
+                    ))}
+                    {filtroEstado.length > 0 && (
+                      <div className="pt-2 border-t border-gray-200">
+                        <button
+                          type="button"
+                          onClick={() => setFiltroEstado([])}
+                          className="w-full text-sm text-blue-600 hover:text-blue-800 text-center py-1"
+                        >
+                          Limpiar filtros
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="sm:w-48">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Fecha desde:
+              </label>
+              <input
+                type="date"
+                value={filtroFechaDesde}
+                onChange={(e) => setFiltroFechaDesde(e.target.value)}
+                max={filtroFechaHasta || hoy}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="sm:w-48">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Fecha hasta:
+              </label>
+              <input
+                type="date"
+                value={filtroFechaHasta}
+                onChange={(e) => setFiltroFechaHasta(e.target.value)}
+                max={hoy}
+                min={filtroFechaDesde || undefined}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            {(filtroFechaDesde || filtroFechaHasta !== hoy) && (
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFiltroFechaDesde('')
+                    setFiltroFechaHasta(hoy)
+                  }}
+                  className="px-4 py-2.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-300 rounded-md hover:bg-blue-50"
+                >
+                  Limpiar fechas
+                </button>
+              </div>
+            )}
+          </div>
+          {filtroEstado.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {filtroEstado.map((estado) => (
+                <span
+                  key={estado}
+                  className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                >
+                  {estado}
+                  <button
+                    type="button"
+                    onClick={() => setFiltroEstado(filtroEstado.filter(e => e !== estado))}
+                    className="ml-2 text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">

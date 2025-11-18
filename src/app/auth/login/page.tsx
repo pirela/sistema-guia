@@ -94,7 +94,7 @@ export default function LoginPage() {
           </button>
         </form>
         <div className='flex justify-center mt-4'>
-          <span className="text-xs text-gray-500 text-center"> Versión 13-11-2025 </span>
+          <span className="text-xs text-gray-500 text-center"> Versión 18-11-2025 </span>
         </div>
       </div>
     </div>

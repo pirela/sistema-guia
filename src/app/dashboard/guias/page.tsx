@@ -4,12 +4,22 @@ import { cachedFetch, clearCache } from '@/lib/supabase-cache'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
-import { Guia, Usuario } from '@/types/database'
+import { Guia, Usuario, Producto } from '@/types/database'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import GenerarPDFGuias from '@/components/GenerarPDFGuias'
 
+interface GuiaProducto {
+  id: string
+  guia_id: string
+  producto_id: string
+  cantidad: number
+  precio_unitario: number
+  producto: Producto
+}
+
 interface GuiaConInfo extends Guia {
+  productos?: GuiaProducto[]
   cantidad_novedades?: number
   ultimo_usuario_id?: string | null
   ultimo_usuario_novedad_id?: string | null
@@ -99,9 +109,24 @@ export default function GuiasPage() {
       if (result.error) throw result.error
       const guiasData = result.data || []
 
-      // Obtener conteo de novedades y último usuario que modificó para cada guía
+      // Obtener productos, conteo de novedades y último usuario que modificó para cada guía
       const guiasConInfo = await Promise.all(
         guiasData.map(async (guia: Guia) => {
+          // Obtener productos
+          const productosResult = await cachedFetch(
+            `guia-productos-${guia.id}`,
+            async () => {
+              return await supabase
+                .from('guias_productos')
+                .select(`
+                  *,
+                  producto:productos(*)
+                `)
+                .eq('guia_id', guia.id)
+            },
+            15000
+          )
+
           // Contar novedades
           const { count: novedadesCount } = await supabase
             .from('novedades')
@@ -135,6 +160,7 @@ export default function GuiasPage() {
 
           return {
             ...guia,
+            productos: productosResult.data as GuiaProducto[] || [],
             cantidad_novedades: novedadesCount || 0,
             ultimo_usuario_id: usuarioIdModifico,
             ultimo_usuario_novedad_id: ultimoUsuarioNovedadId,
@@ -520,55 +546,79 @@ export default function GuiasPage() {
             </div>
           ) : (
             guiasFiltradas.map((guia) => (
-              <div key={guia.id} className="bg-white rounded-lg shadow p-4">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <p className="text-sm text-gray-500">Número</p>
-                    <p className="font-semibold text-gray-900">{guia.numero_guia}</p>
+              <div key={guia.id} className="bg-white rounded-lg shadow p-4 sm:p-6 space-y-3 sm:space-y-4">
+                <div className="flex items-stretch justify-between gap-3">
+                  <div className="flex flex-col">
+                    <h3 className="text-base sm:text-lg font-bold text-gray-800">
+                      {guia.numero_guia}
+                    </h3>
+                    <p className="text-xs sm:text-sm text-gray-500">
+                      {new Date(guia.fecha_creacion).toLocaleDateString()}
+                    </p>
                   </div>
-                  <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)}`}>
+                  <span className={`px-3 py-2 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)} whitespace-nowrap flex items-center justify-center`}>
                     {guia.estado}
                   </span>
                 </div>
-                
-                <div className="space-y-2 mb-3">
-                  <div>
-                    <p className="text-xs text-gray-500">Cliente</p>
-                    <p className="text-sm text-gray-900">{guia.nombre_cliente}</p>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex flex-col sm:flex-row sm:gap-4">
+                    <p className="flex-1"><span className="font-semibold">Cliente:</span> {guia.nombre_cliente}</p>
+                    <p className="sm:w-40"><span className="font-semibold">Tel:</span> {guia.telefono_cliente}</p>
                   </div>
+                  <p><span className="font-semibold">Dirección:</span> {guia.direccion}</p>
                   <div>
                     <p className="text-xs text-gray-500">Motorizado</p>
                     <p className="text-sm text-gray-900">{motorizados[guia.motorizado_asignado]?.nombre || 'N/A'}</p>
                   </div>
-                  <div className="flex justify-between">
-                    <div>
-                      <p className="text-xs text-gray-500">Monto</p>
-                      <p className="text-sm font-semibold text-gray-900">${guia.monto_recaudar.toFixed(2)}</p>
+                  
+                  {/* Productos */}
+                  {guia.productos && guia.productos.length > 0 && (
+                    <div className="bg-gray-50 p-3 rounded-md">
+                      <p className="font-semibold text-xs sm:text-sm mb-2 text-gray-700">Productos a entregar:</p>
+                      <div className="space-y-1">
+                        {guia.productos.map((gp) => (
+                          <div key={gp.id} className="flex justify-between items-center text-xs sm:text-sm">
+                            <span className="text-gray-700">
+                              {gp.producto?.nombre || 'Producto no encontrado'}
+                            </span>
+                            <span className="font-semibold text-gray-900">
+                              x{gp.cantidad}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Fecha</p>
-                      <p className="text-sm text-gray-900">{new Date(guia.fecha_creacion).toLocaleDateString()}</p>
-                    </div>
-                  </div>
-                  <div className="flex justify-between">
-                    <div>
-                      <p className="text-xs text-gray-500">Novedades</p>
-                      {guia.cantidad_novedades ? (
-                        <div className="flex flex-col gap-1">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-pink-100 text-pink-800 w-fit">
-                            {guia.cantidad_novedades}
+                  )}
+                  
+                  {/* Novedades */}
+                  {guia.cantidad_novedades !== undefined && guia.cantidad_novedades > 0 && (
+                    <div className="bg-pink-50 p-3 rounded-md border border-pink-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-xs sm:text-sm mb-1 text-pink-700">Novedades:</p>
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-pink-100 text-pink-800">
+                            {guia.cantidad_novedades} {guia.cantidad_novedades === 1 ? 'novedad' : 'novedades'}
                           </span>
-                          {guia.ultimo_usuario_novedad_id && usuarios[guia.ultimo_usuario_novedad_id] && (
-                            <p className="text-xs text-gray-500">
-                              Por: {usuarios[guia.ultimo_usuario_novedad_id].nombre}
-                            </p>
-                          )}
                         </div>
-                      ) : (
-                        <p className="text-sm text-gray-400">0</p>
-                      )}
+                        {guia.ultimo_usuario_novedad_id && usuarios[guia.ultimo_usuario_novedad_id] && (
+                          <p className="text-xs text-pink-600">
+                            Última por:<br />
+                            <span className="font-semibold">{usuarios[guia.ultimo_usuario_novedad_id].nombre}</span>
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
+                  
+                  <p className="text-base sm:text-lg font-bold text-green-600">
+                    Monto: ${guia.monto_recaudar.toFixed(2)}
+                  </p>
+                  {guia.observacion && (
+                    <p className="text-xs sm:text-sm bg-yellow-50 p-2 rounded">
+                      <span className="font-semibold">Obs:</span> {guia.observacion}
+                    </p>
+                  )}
                 </div>
                 
                 <Link

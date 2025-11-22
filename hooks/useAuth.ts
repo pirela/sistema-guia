@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Usuario } from '@/types/database'
@@ -9,6 +9,7 @@ export function useAuth() {
   const [user, setUser] = useState<Usuario | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
+  const isSigningOutRef = useRef(false) // Bandera para evitar conflictos con el listener
 
   // Función para obtener datos del usuario (sin caché)
   const fetchUserData = async (userId: string, isMounted: () => boolean) => {
@@ -19,7 +20,7 @@ export function useAuth() {
           console.warn('Timeout en fetchUserData, forzando loading a false')
           setLoading(false)
         }
-      }, 5000)
+      }, 2500)
 
       // Obtener datos del usuario directamente sin caché
       const { data, error } = await supabase
@@ -147,6 +148,12 @@ export function useAuth() {
       async (event, session) => {
         if (!mounted) return
 
+        // Si estamos haciendo logout manual, ignorar el evento del listener
+        // para evitar conflictos y múltiples redirecciones
+        if (isSigningOutRef.current && event === 'SIGNED_OUT') {
+          return
+        }
+
         if (event === 'SIGNED_IN' && session) {
           // Verificar que el token no esté expirado
           const now = Math.floor(Date.now() / 1000)
@@ -163,7 +170,10 @@ export function useAuth() {
           if (event === 'SIGNED_OUT') {
             setUser(null)
             setLoading(false)
-            router.push('/auth/login')
+            // Solo usar router.push si no estamos haciendo logout manual
+            if (!isSigningOutRef.current) {
+              router.push('/auth/login')
+            }
           } else if (event === 'TOKEN_REFRESHED' && session) {
             // Si el token se refrescó, verificar que el usuario siga siendo válido
             await fetchUserData(session.user.id, isMounted)
@@ -207,11 +217,50 @@ export function useAuth() {
   }
 
   const signOut = async () => {
-    setLoading(true)
-    await supabase.auth.signOut()
-    setUser(null)
-    setLoading(false)
-    router.push('/auth/login')
+    try {
+      // Marcar que estamos haciendo logout manual para evitar conflictos con el listener
+      isSigningOutRef.current = true
+      setLoading(true)
+      
+      // Cerrar sesión en Supabase
+      const { error: signOutError } = await supabase.auth.signOut()
+      
+      if (signOutError) {
+        console.error('Error al cerrar sesión:', signOutError)
+      }
+      
+      // Esperar un momento para asegurar que el logout se propague
+      await new Promise(resolve => setTimeout(resolve, 200))
+      
+      // Verificar una vez más que la sesión se cerró
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (session) {
+        // Si aún hay sesión, forzar cierre nuevamente
+        await supabase.auth.signOut()
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      
+      // Limpiar estados locales
+      setUser(null)
+      setLoading(false)
+      
+      // Usar window.location.href para forzar recarga completa
+      // Esto evita problemas con el middleware y Next.js router
+      window.location.href = '/auth/login'
+      
+    } catch (error) {
+      console.error('Error en signOut:', error)
+      // En caso de error, limpiar estados y forzar redirección
+      setUser(null)
+      setLoading(false)
+      window.location.href = '/auth/login'
+    } finally {
+      // Resetear la bandera después de un momento (por si acaso)
+      setTimeout(() => {
+        isSigningOutRef.current = false
+      }, 1000)
+    }
   }
 
   return { user, loading, signIn, signOut }

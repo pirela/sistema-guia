@@ -3,9 +3,23 @@ const CACHE_DURATION = 30000 // 30 segundos
 const REQUEST_DELAY = 1000 // 1000ms (1 segundo) entre requests para evitar rate limits
 const MAX_RETRIES = 3
 const RETRY_DELAY = 2000 // 2 segundos entre reintentos
+const REQUEST_TIMEOUT = 10000 // 10 segundos timeout por request
+const STALE_REQUEST_CLEANUP_INTERVAL = 30000 // Limpiar requests antiguos cada 30 segundos
 
 let lastRequestTime = 0
-const pendingRequests = new Map<string, Promise<any>>()
+const pendingRequests = new Map<string, { promise: Promise<any>; startTime: number }>()
+
+// Limpieza periódica de requests antiguos
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, requestInfo] of pendingRequests.entries()) {
+    // Si un request lleva más del doble del timeout, considerarlo obsoleto y eliminarlo
+    if (now - requestInfo.startTime > REQUEST_TIMEOUT * 2) {
+      console.warn(`Eliminando request obsoleto para clave: ${key}`)
+      pendingRequests.delete(key)
+    }
+  }
+}, STALE_REQUEST_CLEANUP_INTERVAL)
 
 export async function cachedFetch<T>(
   key: string,
@@ -21,51 +35,66 @@ export async function cachedFetch<T>(
   // Si ya hay una petición pendiente para esta clave, esperar a que termine
   const pending = pendingRequests.get(key)
   if (pending) {
-    return pending
+    return pending.promise
   }
 
-  // Crear nueva petición
+  // Crear nueva petición con timeout
+  const requestStartTime = Date.now()
   const requestPromise = (async () => {
-    // Rate limiting: esperar entre requests
-    const now = Date.now()
-    const timeSinceLastRequest = now - lastRequestTime
-    if (timeSinceLastRequest < REQUEST_DELAY) {
-      await new Promise(resolve => 
-        setTimeout(resolve, REQUEST_DELAY - timeSinceLastRequest)
-      )
-    }
-
-    lastRequestTime = Date.now()
-    
-    // Retry logic con exponential backoff
-    let lastError: any
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const data = await fn()
-        cache.set(key, { data, timestamp: Date.now() })
-        pendingRequests.delete(key)
-        return data
-      } catch (error: any) {
-        lastError = error
-        
-        // Si es rate limit, esperar más tiempo
-        if (error?.code === 'over_request_rate_limit' || error?.message?.includes('rate limit')) {
-          const delay = RETRY_DELAY * Math.pow(2, attempt) // Exponential backoff
-          console.warn(`Rate limit alcanzado (intento ${attempt + 1}/${MAX_RETRIES}), esperando ${delay}ms...`)
-          await new Promise(resolve => setTimeout(resolve, delay))
-          continue
-        }
-        
-        // Para otros errores, no reintentar
-        break
+    try {
+      // Rate limiting: esperar entre requests
+      const now = Date.now()
+      const timeSinceLastRequest = now - lastRequestTime
+      if (timeSinceLastRequest < REQUEST_DELAY) {
+        await new Promise(resolve => 
+          setTimeout(resolve, REQUEST_DELAY - timeSinceLastRequest)
+        )
       }
+
+      lastRequestTime = Date.now()
+      
+      // Crear promesa con timeout
+      const timeoutPromise = new Promise<T>((_, reject) => 
+        setTimeout(() => reject(new Error(`Timeout en cachedFetch para clave: ${key}`)), REQUEST_TIMEOUT)
+      )
+      
+      // Retry logic con exponential backoff
+      let lastError: any
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          const fnPromise = fn()
+          const data = await Promise.race([fnPromise, timeoutPromise])
+          cache.set(key, { data, timestamp: Date.now() })
+          pendingRequests.delete(key)
+          return data
+        } catch (error: any) {
+          lastError = error
+          
+          // Si es timeout o rate limit, esperar más tiempo
+          if (error?.message?.includes('Timeout') || 
+              error?.code === 'over_request_rate_limit' || 
+              error?.message?.includes('rate limit')) {
+            const delay = RETRY_DELAY * Math.pow(2, attempt) // Exponential backoff
+            console.warn(`Error en cachedFetch (intento ${attempt + 1}/${MAX_RETRIES}), esperando ${delay}ms...`, error?.message)
+            await new Promise(resolve => setTimeout(resolve, delay))
+            continue
+          }
+          
+          // Para otros errores, no reintentar
+          break
+        }
+      }
+      
+      pendingRequests.delete(key)
+      throw lastError
+    } catch (error) {
+      // Asegurar que siempre se elimine del mapa de pending requests
+      pendingRequests.delete(key)
+      throw error
     }
-    
-    pendingRequests.delete(key)
-    throw lastError
   })()
 
-  pendingRequests.set(key, requestPromise)
+  pendingRequests.set(key, { promise: requestPromise, startTime: requestStartTime })
   return requestPromise
 }
 

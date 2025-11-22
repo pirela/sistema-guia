@@ -4,7 +4,8 @@ import { cachedFetch, clearCache } from '@/lib/supabase-cache'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { EstadoGuia, Guia } from '@/types/database'
 
 interface EstadisticasMotorizado {
   motorizado_id: string
@@ -40,6 +41,11 @@ interface ProductosDespachados {
   ultima_vez_despachado: string | null
 }
 
+interface GuiaReporte extends Guia {
+  // Hereda todos los campos de Guia, incluyendo:
+  // numero_guia, monto_recaudar, fecha_actualizacion, estado
+}
+
 export default function ReportesPage() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
@@ -47,6 +53,17 @@ export default function ReportesPage() {
   const [estadisticasMotorizados, setEstadisticasMotorizados] = useState<EstadisticasMotorizado[]>([])
   const [guiasPorEstado, setGuiasPorEstado] = useState<GuiasPorEstado[]>([])
   const [productosDespachados, setProductosDespachados] = useState<ProductosDespachados[]>([])
+  
+  // Estados para el reporte de guías con filtros
+  const [guiasReporte, setGuiasReporte] = useState<GuiaReporte[]>([])
+  const [loadingReporte, setLoadingReporte] = useState(false)
+  const [filtroEstados, setFiltroEstados] = useState<EstadoGuia[]>([])
+  const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
+  const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>('')
+  const [mostrarFiltroEstados, setMostrarFiltroEstados] = useState(false)
+  const filtroEstadosRef = useRef<HTMLDivElement>(null)
+  
+  const ESTADOS_DISPONIBLES: EstadoGuia[] = ['pendiente', 'asignada', 'en_ruta', 'entregada', 'finalizada', 'cancelada', 'rechazada', 'novedad']
 
   useEffect(() => {
     if (user?.rol === 'administrador') {
@@ -114,11 +131,97 @@ export default function ReportesPage() {
       asignada: 'bg-blue-100 text-blue-800',
       en_ruta: 'bg-yellow-100 text-yellow-800',
       entregada: 'bg-green-100 text-green-800',
+      finalizada: 'bg-indigo-100 text-indigo-800',
       cancelada: 'bg-red-100 text-red-800',
       rechazada: 'bg-orange-100 text-orange-800',
       novedad: 'bg-pink-100 text-pink-800',
     }
     return colors[estado] || 'bg-gray-100 text-gray-800'
+  }
+
+  const getEstadoTexto = (estado: string) => {
+    const textos: { [key: string]: string } = {
+      pendiente: 'Pendiente',
+      asignada: 'Asignada',
+      en_ruta: 'En Ruta',
+      entregada: 'Entregada',
+      finalizada: 'Finalizada',
+      cancelada: 'Cancelada',
+      rechazada: 'Rechazada',
+      novedad: 'Novedad',
+    }
+    return textos[estado] || estado
+  }
+
+  // Cerrar el dropdown de filtro de estados al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (filtroEstadosRef.current && !filtroEstadosRef.current.contains(event.target as Node)) {
+        setMostrarFiltroEstados(false)
+      }
+    }
+
+    if (mostrarFiltroEstados) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [mostrarFiltroEstados])
+
+  // Función para buscar guías con filtros
+  const buscarGuiasReporte = async () => {
+    // Resetear estado de carga
+    setLoadingReporte(true)
+    
+    try {
+      // Construir la query base
+      let queryBuilder = supabase
+        .from('guias')
+        .select('*')
+        .eq('eliminado', false)
+
+      // Aplicar filtro por estados (multiselect)
+      if (filtroEstados.length > 0) {
+        queryBuilder = queryBuilder.in('estado', filtroEstados)
+      }
+
+      // Aplicar filtro por fecha desde (inclusivo - desde 00:00:00)
+      if (filtroFechaDesde) {
+        const fechaDesdeInicio = new Date(filtroFechaDesde)
+        fechaDesdeInicio.setHours(0, 0, 0, 0)
+        queryBuilder = queryBuilder.gte('fecha_actualizacion', fechaDesdeInicio.toISOString())
+      }
+
+      // Aplicar filtro por fecha hasta (inclusivo - hasta 23:59:59)
+      if (filtroFechaHasta) {
+        const fechaHastaFin = new Date(filtroFechaHasta)
+        fechaHastaFin.setHours(23, 59, 59, 999)
+        queryBuilder = queryBuilder.lte('fecha_actualizacion', fechaHastaFin.toISOString())
+      }
+
+      // Aplicar ordenamiento
+      queryBuilder = queryBuilder.order('fecha_actualizacion', { ascending: false })
+
+      // Ejecutar la query
+      const { data, error } = await queryBuilder
+
+      if (error) {
+        console.error('Error en la query de Supabase:', error)
+        throw error
+      }
+
+      // Actualizar el estado con los datos
+      setGuiasReporte(data || [])
+    } catch (error) {
+      console.error('Error buscando guías para reporte:', error)
+      // Resetear los resultados en caso de error
+      setGuiasReporte([])
+    } finally {
+      // SIEMPRE resetear el estado de carga, incluso si hay error
+      setLoadingReporte(false)
+    }
   }
   /*
   if (!user || user.rol !== 'administrador') {
@@ -412,6 +515,307 @@ export default function ReportesPage() {
               ))
             )}
           </div>
+        </div>
+
+        {/* Nuevo Reporte de Guías con Filtros */}
+        <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-800 mb-4">📋 Reporte de Guías</h3>
+          
+          {/* Filtros */}
+          <div className="mb-6 space-y-4">
+            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center flex-wrap">
+              {/* Filtro por Estados (Multiselect) */}
+              <div className="flex items-center gap-2 relative" ref={filtroEstadosRef}>
+                <span className="text-sm text-gray-600 whitespace-nowrap">Estados:</span>
+                <button
+                  type="button"
+                  onClick={() => setMostrarFiltroEstados(!mostrarFiltroEstados)}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center gap-2 min-w-[200px]"
+                >
+                  <span className="flex-1 text-left">
+                    {filtroEstados.length === 0 
+                      ? 'Todos los estados' 
+                      : filtroEstados.length === 1 
+                      ? getEstadoTexto(filtroEstados[0]) 
+                      : `${filtroEstados.length} estados seleccionados`}
+                  </span>
+                  <svg
+                    className={`w-4 h-4 text-gray-500 transition-transform ${mostrarFiltroEstados ? 'transform rotate-180' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {mostrarFiltroEstados && (
+                  <div className="absolute z-20 top-full left-0 mt-1 w-64 bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-auto">
+                    <div className="p-2 space-y-1">
+                      {ESTADOS_DISPONIBLES.map((estado) => (
+                        <label
+                          key={estado}
+                          className="flex items-center justify-between space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={filtroEstados.includes(estado)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setFiltroEstados([...filtroEstados, estado])
+                                } else {
+                                  setFiltroEstados(filtroEstados.filter(e => e !== estado))
+                                }
+                              }}
+                              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                            />
+                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getEstadoColor(estado)}`}>
+                              {getEstadoTexto(estado)}
+                            </span>
+                          </div>
+                        </label>
+                      ))}
+                      {filtroEstados.length > 0 && (
+                        <div className="pt-2 border-t border-gray-200 mt-1">
+                          <button
+                            type="button"
+                            onClick={() => setFiltroEstados([])}
+                            className="w-full text-sm text-blue-600 hover:text-blue-800 text-center py-1"
+                          >
+                            Limpiar filtros
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {filtroEstados.length > 0 && (
+                  <button
+                    onClick={() => setFiltroEstados([])}
+                    className="px-2 py-1 text-sm text-gray-600 hover:text-gray-800"
+                    title="Limpiar estados"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Filtro por Fecha Desde */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600 whitespace-nowrap">Desde:</span>
+                <input
+                  type="date"
+                  value={filtroFechaDesde}
+                  onChange={(e) => setFiltroFechaDesde(e.target.value)}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {filtroFechaDesde && (
+                  <button
+                    onClick={() => setFiltroFechaDesde('')}
+                    className="px-2 py-1 text-sm text-gray-600 hover:text-gray-800"
+                    title="Limpiar fecha desde"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Filtro por Fecha Hasta */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600 whitespace-nowrap">Hasta:</span>
+                <input
+                  type="date"
+                  value={filtroFechaHasta}
+                  onChange={(e) => setFiltroFechaHasta(e.target.value)}
+                  min={filtroFechaDesde || undefined}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {filtroFechaHasta && (
+                  <button
+                    onClick={() => setFiltroFechaHasta('')}
+                    className="px-2 py-1 text-sm text-gray-600 hover:text-gray-800"
+                    title="Limpiar fecha hasta"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Botón Buscar */}
+              <button
+                onClick={buscarGuiasReporte}
+                disabled={loadingReporte}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {loadingReporte ? (
+                  <>
+                    <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Buscando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    Buscar
+                  </>
+                )}
+              </button>
+
+              {/* Botón Limpiar Todos los Filtros */}
+              {(filtroEstados.length > 0 || filtroFechaDesde || filtroFechaHasta) && (
+                <button
+                  onClick={() => {
+                    setFiltroEstados([])
+                    setFiltroFechaDesde('')
+                    setFiltroFechaHasta('')
+                    setGuiasReporte([])
+                  }}
+                  className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  Limpiar todos
+                </button>
+              )}
+            </div>
+
+            {/* Info de filtros activos */}
+            {(filtroEstados.length > 0 || filtroFechaDesde || filtroFechaHasta) && (
+              <div className="text-xs text-gray-500 space-y-1">
+                {filtroEstados.length > 0 && (
+                  <p>
+                    Estados: <span className="font-semibold">{filtroEstados.map(e => getEstadoTexto(e)).join(', ')}</span>
+                  </p>
+                )}
+                {filtroFechaDesde && (
+                  <p>
+                    Desde: <span className="font-semibold">{new Date(filtroFechaDesde).toLocaleDateString('es-ES')}</span>
+                  </p>
+                )}
+                {filtroFechaHasta && (
+                  <p>
+                    Hasta: <span className="font-semibold">{new Date(filtroFechaHasta).toLocaleDateString('es-ES')}</span> (ambas fechas inclusivas)
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Tabla de Resultados */}
+          {loadingReporte ? (
+            <div className="text-center py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
+              <div className="text-gray-600">Buscando guías...</div>
+            </div>
+          ) : (
+            <>
+              <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-sm">
+                <div className="text-gray-600">
+                  Total de guías encontradas: <span className="font-semibold">{guiasReporte.length}</span>
+                </div>
+                {guiasReporte.length > 0 && (
+                  <div className="text-gray-600">
+                    Monto total a recaudar: <span className="font-semibold text-green-700">
+                      ${guiasReporte.reduce((sum, guia) => sum + guia.monto_recaudar, 0).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Número de Guía
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Monto a Recaudar
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Última Fecha de Cambio
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Estado Actual
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {guiasReporte.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
+                          No se encontraron guías con los filtros seleccionados
+                        </td>
+                      </tr>
+                    ) : (
+                      guiasReporte.map((guia) => (
+                        <tr key={guia.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {guia.numero_guia}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            ${guia.monto_recaudar.toFixed(2)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {new Date(guia.fecha_actualizacion).toLocaleDateString('es-ES', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-3 py-1 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)}`}>
+                              {getEstadoTexto(guia.estado)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Vista móvil */}
+              <div className="md:hidden space-y-3">
+                {guiasReporte.length === 0 ? (
+                  <div className="text-center text-gray-500 py-4">
+                    No se encontraron guías con los filtros seleccionados
+                  </div>
+                ) : (
+                  guiasReporte.map((guia) => (
+                    <div key={guia.id} className="border rounded-lg p-4 space-y-2">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h4 className="font-bold text-gray-900">{guia.numero_guia}</h4>
+                          <p className="text-xs text-gray-500">
+                            {new Date(guia.fecha_actualizacion).toLocaleDateString('es-ES', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </p>
+                        </div>
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)}`}>
+                          {getEstadoTexto(guia.estado)}
+                        </span>
+                      </div>
+                      <div className="border-t pt-2">
+                        <p className="flex justify-between text-sm">
+                          <span className="text-gray-600">Monto a recaudar:</span>
+                          <span className="font-bold text-gray-900">${guia.monto_recaudar.toFixed(2)}</span>
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </DashboardLayout>

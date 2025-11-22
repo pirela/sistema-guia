@@ -1,6 +1,5 @@
 'use client'
 
-import { cachedFetch, clearCache } from '@/lib/supabase-cache'
 import DashboardLayout from '@/components/DashboardLayout'
 import ModalComentarioNovedad from '@/components/ModalComentarioNovedad'
 import { useAuth } from '@/hooks/useAuth'
@@ -41,14 +40,25 @@ const LOCALIDADES = [
   'Barrios Unidos',
   'Teusaquillo',
   'Los Mártires',
+  'Martires',
   'Antonio Nariño',
   'Puente Aranda',
   'La Candelaria',
+  'Candelaria',
   'Rafael Uribe Uribe',
+  'Rafael Uribe',
   'Ciudad Bolívar',
   'Sumapaz',
   'SIN LOCALIDAD'
 ]
+
+// Función para normalizar texto removiendo acentos y convirtiendo a mayúsculas
+const normalizarTexto = (texto: string): string => {
+  return texto
+    .normalize('NFD') // Descompone caracteres con acentos
+    .replace(/[\u0300-\u036f]/g, '') // Remueve los diacríticos (acentos)
+    .toUpperCase()
+}
 
 export default function MisGuiasPage() {
   const { user, loading: authLoading } = useAuth()
@@ -126,27 +136,27 @@ export default function MisGuiasPage() {
         const todasLasLocalidades = LOCALIDADES.filter(l => l !== 'SIN LOCALIDAD')
         
         guiasData = guiasData.filter(guia => {
-          const direccionUpper = (guia.direccion || '').toUpperCase()
+          const direccionNormalizada = normalizarTexto(guia.direccion || '')
           
           if (tieneSinLocalidad && localidadesNormales.length > 0) {
             // Si hay "SIN LOCALIDAD" y otras localidades: OR
             // La guía debe contener alguna localidad normal O no contener ninguna localidad
             const contieneLocalidadNormal = localidadesNormales.some(loc => 
-              direccionUpper.includes(loc.toUpperCase())
+              direccionNormalizada.includes(normalizarTexto(loc))
             )
             const noContieneNingunaLocalidad = !todasLasLocalidades.some(loc => 
-              direccionUpper.includes(loc.toUpperCase())
+              direccionNormalizada.includes(normalizarTexto(loc))
             )
             return contieneLocalidadNormal || noContieneNingunaLocalidad
           } else if (tieneSinLocalidad) {
             // Solo "SIN LOCALIDAD": la guía NO debe contener ninguna localidad
             return !todasLasLocalidades.some(loc => 
-              direccionUpper.includes(loc.toUpperCase())
+              direccionNormalizada.includes(normalizarTexto(loc))
             )
           } else {
             // Solo localidades normales: la guía debe contener al menos una de las localidades seleccionadas
             return localidadesNormales.some(loc => 
-              direccionUpper.includes(loc.toUpperCase())
+              direccionNormalizada.includes(normalizarTexto(loc))
             )
           }
         })
@@ -160,48 +170,127 @@ export default function MisGuiasPage() {
       const nextOffset = pageOffset + REGISTROS_POR_PAGINA
       setHasMore(nextOffset < total)
 
-      // Obtener productos y novedades para cada guía
-      const guiasConProductos = await Promise.all(
+      // Helper para crear una promesa con timeout (funciona con cualquier promesa)
+      const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> => {
+        return Promise.race([
+          Promise.resolve(promise),
+          new Promise<T>((_, reject) => 
+            setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+          )
+        ])
+      }
+
+      // Obtener productos y novedades para cada guía usando Promise.allSettled para manejar errores individuales
+      const resultados = await Promise.allSettled(
         guiasData.map(async (guia: Guia) => {
-          const productosResult = await cachedFetch(
-            `guia-productos-${guia.id}`,
-            async () => {
-              return await supabase
+          try {
+            // Obtener productos con timeout de 8 segundos (sin caché)
+            let productosResult: { data: GuiaProducto[] | null; error: any } = { data: [], error: null }
+            try {
+              const productosQueryPromise = supabase
                 .from('guias_productos')
                 .select(`
                   *,
                   producto:productos(*)
                 `)
                 .eq('guia_id', guia.id)
-            },
-            15000
-          )
+              
+              productosResult = await Promise.race([
+                productosQueryPromise,
+                new Promise<{ data: null; error: Error }>((_, reject) => 
+                  setTimeout(() => reject(new Error(`Timeout obteniendo productos para guía ${guia.id}`)), 8000)
+                )
+              ]) as { data: GuiaProducto[] | null; error: any }
+              
+              if (productosResult.error) throw productosResult.error
+            } catch (error) {
+              console.error(`Error obteniendo productos para guía ${guia.id}:`, error)
+              productosResult = { data: [], error: null }
+            }
 
-          // Contar novedades
-          const { count: novedadesCount } = await supabase
-            .from('novedades')
-            .select('*', { count: 'exact', head: true })
-            .eq('guia_id', guia.id)
+            // Contar novedades con timeout de 5 segundos
+            let novedadesCount = 0
+            try {
+              const countQuery = supabase
+                .from('novedades')
+                .select('*', { count: 'exact', head: true })
+                .eq('guia_id', guia.id)
+              
+              const countResult = await Promise.race([
+                countQuery,
+                new Promise<{ count: null; error: Error }>((_, reject) => 
+                  setTimeout(() => reject(new Error(`Timeout contando novedades para guía ${guia.id}`)), 5000)
+                )
+              ]) as { count: number | null; error?: any }
+              
+              if (countResult.error) throw countResult.error
+              novedadesCount = countResult?.count || 0
+            } catch (error) {
+              console.error(`Error contando novedades para guía ${guia.id}:`, error)
+              novedadesCount = 0
+            }
 
-          // Obtener última novedad para saber quién la creó
-          const { data: ultimaNovedadData } = await supabase
-            .from('novedades')
-            .select('usuario_id')
-            .eq('guia_id', guia.id)
-            .order('fecha_creacion', { ascending: false })
-            .limit(1)
-            .maybeSingle()
+            // Obtener última novedad con timeout de 5 segundos
+            let ultimoUsuarioNovedadId: string | null = null
+            try {
+              const ultimaNovedadQuery = supabase
+                .from('novedades')
+                .select('usuario_id')
+                .eq('guia_id', guia.id)
+                .order('fecha_creacion', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+              
+              const ultimaNovedadResult = await Promise.race([
+                ultimaNovedadQuery,
+                new Promise<{ data: null; error: Error }>((_, reject) => 
+                  setTimeout(() => reject(new Error(`Timeout obteniendo última novedad para guía ${guia.id}`)), 5000)
+                )
+              ]) as { data: { usuario_id: string } | null; error?: any }
+              
+              if (ultimaNovedadResult.error) throw ultimaNovedadResult.error
+              ultimoUsuarioNovedadId = ultimaNovedadResult?.data?.usuario_id || null
+            } catch (error) {
+              console.error(`Error obteniendo última novedad para guía ${guia.id}:`, error)
+              ultimoUsuarioNovedadId = null
+            }
 
-          const ultimoUsuarioNovedadId = ultimaNovedadData?.usuario_id || null
-
-          return {
-            ...guia,
-            productos: productosResult.data as GuiaProducto[] || [],
-            cantidad_novedades: novedadesCount || 0,
-            ultimo_usuario_novedad_id: ultimoUsuarioNovedadId,
+            return {
+              ...guia,
+              productos: productosResult.data as GuiaProducto[] || [],
+              cantidad_novedades: novedadesCount,
+              ultimo_usuario_novedad_id: ultimoUsuarioNovedadId,
+            }
+          } catch (error) {
+            console.error(`Error procesando guía ${guia.id}:`, error)
+            // Retornar guía con datos mínimos si hay error
+            return {
+              ...guia,
+              productos: [],
+              cantidad_novedades: 0,
+              ultimo_usuario_novedad_id: null,
+            }
           }
         })
       )
+
+      // Procesar resultados de Promise.allSettled
+      const guiasConProductos = resultados
+        .map((result, index) => {
+          if (result.status === 'fulfilled') {
+            return result.value
+          } else {
+            console.error(`Error en guía ${guiasData[index]?.id}:`, result.reason)
+            // Retornar guía con datos mínimos si falló
+            return {
+              ...guiasData[index],
+              productos: [],
+              cantidad_novedades: 0,
+              ultimo_usuario_novedad_id: null,
+            } as GuiaConProductos
+          }
+        })
+        .filter(Boolean) as GuiaConProductos[]
 
       if (reset) {
         setGuias(guiasConProductos)
@@ -212,7 +301,14 @@ export default function MisGuiasPage() {
       setOffset(nextOffset)
     } catch (error) {
       console.error('Error fetching mis guias:', error)
+      // Resetear estados en caso de error para evitar estados inconsistentes
+      if (reset) {
+        setGuias([])
+        setOffset(0)
+      }
+      setHasMore(false)
     } finally {
+      // Siempre resetear estados de carga, incluso si hay error
       setLoading(false)
       setLoadingMore(false)
     }
@@ -226,20 +322,15 @@ export default function MisGuiasPage() {
 
   const fetchUsuarios = async () => {
     try {
-      const result = await cachedFetch(
-        'usuarios-todos',
-        async () => {
-          return await supabase
-            .from('usuarios')
-            .select('*')
-            .eq('eliminado', false)
-        }
-      )
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('eliminado', false)
 
-      if (result.error) throw result.error
+      if (error) throw error
       
       const usuariosMap: { [key: string]: Usuario } = {}
-      result.data?.forEach((u) => {
+      data?.forEach((u) => {
         usuariosMap[u.id] = u
       })
       setUsuarios(usuariosMap)
@@ -285,17 +376,20 @@ export default function MisGuiasPage() {
     }
   }, [user, authLoading, filtroEstado, filtroFechaDesde, filtroFechaHasta, filtroLocalidades, fetchMisGuias])
 
-  // Timeout de seguridad: si después de 15 segundos aún está cargando, forzar setLoading(false)
+  // Timeout de seguridad: si después de 15 segundos aún está cargando, forzar setLoading(false) y setLoadingMore(false)
   useEffect(() => {
-    if (loading && !authLoading) {
+    if ((loading || loadingMore) && !authLoading) {
       const timeoutId = setTimeout(() => {
-        console.warn('Timeout en mis-guias, forzando loading a false')
+        console.warn('Timeout en mis-guias, forzando loading y loadingMore a false')
         setLoading(false)
+        setLoadingMore(false)
+        // También resetear hasMore si hay timeout para evitar bucles
+        setHasMore(false)
       }, 15000)
 
       return () => clearTimeout(timeoutId)
     }
-  }, [loading, authLoading])
+  }, [loading, loadingMore, authLoading])
 
   // Intersection Observer para infinite scroll
   useEffect(() => {
@@ -379,11 +473,6 @@ export default function MisGuiasPage() {
           // No lanzar error, solo loguear, porque el cambio de estado ya se hizo
         }
       }
-      
-      clearCache(`mis-guias-${user?.id}`)
-      clearCache(`guia-${guiaId}`)
-      clearCache(`guia-historial-${guiaId}`)
-      clearCache(`guia-novedades-${guiaId}`)
       
       // Refrescar contadores y recargar guías
       fetchContadores().then(setContadores)
@@ -525,12 +614,12 @@ export default function MisGuiasPage() {
       // Contar por localidad
       if (guiasData) {
         guiasData.forEach(guia => {
-          const direccionUpper = (guia.direccion || '').toUpperCase()
+          const direccionNormalizada = normalizarTexto(guia.direccion || '')
           let encontrada = false
 
-          // Buscar en cada localidad normal
+          // Buscar en cada localidad normal (usando normalización sin acentos)
           todasLasLocalidades.forEach(localidad => {
-            if (direccionUpper.includes(localidad.toUpperCase())) {
+            if (direccionNormalizada.includes(normalizarTexto(localidad))) {
               contadores[localidad]++
               encontrada = true
             }

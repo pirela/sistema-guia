@@ -37,8 +37,8 @@ export default function GuiasPage() {
   const [filtroNombreClienteDebounced, setFiltroNombreClienteDebounced] = useState<string>('')
   const filtroEstadoRef = useRef<HTMLDivElement>(null)
   
-  // Obtener fecha de hoy en formato YYYY-MM-DD para el input date
-  const hoy = new Date().toISOString().split('T')[0]
+  // Obtener fecha de hoy en formato YYYY-MM-DD para el input date + 7 días
+  const hoy = new Date(new Date().setDate(new Date().getDate() + 7)).toISOString().split('T')[0]
   const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
   const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>(hoy)
 

@@ -1,21 +1,61 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
+import { Usuario } from '@/types/database'
 
 export default function ImportarOrdenShopify() {
   const { user } = useAuth()
   const router = useRouter()
   const [orderNumber, setOrderNumber] = useState('')
+  const [motorizadoId, setMotorizadoId] = useState('')
+  const [motorizados, setMotorizados] = useState<Usuario[]>([])
+  const [cargandoMotorizados, setCargandoMotorizados] = useState(true)
   const [importando, setImportando] = useState(false)
   const [mensaje, setMensaje] = useState<{ tipo: 'success' | 'error', texto: string } | null>(null)
+
+  // Cargar lista de motorizados
+  useEffect(() => {
+    const fetchMotorizados = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .select('*')
+          .eq('rol', 'motorizado')
+          .eq('activo', true)
+          .eq('eliminado', false)
+          .order('nombre', { ascending: true })
+
+        if (error) throw error
+        setMotorizados(data || [])
+        
+        // Seleccionar el primer motorizado por defecto si hay alguno
+        if (data && data.length > 0) {
+          setMotorizadoId(data[0].id)
+        }
+      } catch (error) {
+        console.error('Error cargando motorizados:', error)
+        setMensaje({ tipo: 'error', texto: 'Error al cargar motorizados' })
+      } finally {
+        setCargandoMotorizados(false)
+      }
+    }
+
+    fetchMotorizados()
+  }, [])
 
   const handleImportar = async (e: React.FormEvent) => {
     e.preventDefault()
     
     if (!orderNumber.trim()) {
       setMensaje({ tipo: 'error', texto: 'Ingresa un número de orden' })
+      return
+    }
+
+    if (!motorizadoId) {
+      setMensaje({ tipo: 'error', texto: 'Selecciona un motorizado' })
       return
     }
 
@@ -30,7 +70,8 @@ export default function ImportarOrdenShopify() {
         },
         body: JSON.stringify({
           orderNumber: orderNumber.trim(),
-          userId: user?.id
+          userId: user?.id,
+          motorizadoId: motorizadoId
         })
       })
 
@@ -85,6 +126,34 @@ export default function ImportarOrdenShopify() {
           </p>
         </div>
 
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Motorizado
+          </label>
+          {cargandoMotorizados ? (
+            <div className="px-4 py-2.5 border border-gray-300 rounded-md bg-gray-50 text-gray-500">
+              Cargando motorizados...
+            </div>
+          ) : motorizados.length === 0 ? (
+            <div className="px-4 py-2.5 border border-red-300 rounded-md bg-red-50 text-red-700">
+              No hay motorizados disponibles. Crea al menos un motorizado antes de importar.
+            </div>
+          ) : (
+            <select
+              value={motorizadoId}
+              onChange={(e) => setMotorizadoId(e.target.value)}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              disabled={importando}
+            >
+              {motorizados.map((motorizado) => (
+                <option key={motorizado.id} value={motorizado.id}>
+                  {motorizado.nombre} ({motorizado.username})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
         {mensaje && (
           <div className={`p-3 rounded-md ${
             mensaje.tipo === 'success' 
@@ -97,7 +166,7 @@ export default function ImportarOrdenShopify() {
 
         <button
           type="submit"
-          disabled={importando}
+          disabled={importando || !motorizadoId || motorizados.length === 0}
           className="w-full bg-green-600 text-white px-4 py-2.5 rounded-md hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
         >
           {importando ? 'Importando...' : '📥 Importar Orden'}

@@ -4,10 +4,14 @@ import { supabase } from '@/lib/supabase'
 
 export async function POST(request: NextRequest) {
   try {
-    const { orderNumber, userId } = await request.json()
+    const { orderNumber, userId, motorizadoId } = await request.json()
 
     if (!orderNumber) {
       return NextResponse.json({ error: 'Número de orden requerido' }, { status: 400 })
+    }
+
+    if (!motorizadoId) {
+      return NextResponse.json({ error: 'Motorizado requerido' }, { status: 400 })
     }
 
     const orden = await obtenerOrdenShopify(orderNumber)
@@ -32,18 +36,19 @@ export async function POST(request: NextRequest) {
       }, { status: 409 })
     }
 
-    const { data: motorizadoDefault } = await supabase
+    // Verificar que el motorizado existe y está activo
+    const { data: motorizado, error: motorizadoError } = await supabase
       .from('usuarios')
-      .select('id')
+      .select('id, nombre')
+      .eq('id', motorizadoId)
       .eq('rol', 'motorizado')
       .eq('activo', true)
       .eq('eliminado', false)
-      .limit(1)
       .single()
 
-    if (!motorizadoDefault) {
+    if (motorizadoError || !motorizado) {
       return NextResponse.json({ 
-        error: 'No hay motorizados disponibles. Crea al menos un motorizado antes de importar órdenes.' 
+        error: 'Motorizado no válido o no está disponible' 
       }, { status: 400 })
     }
 
@@ -91,7 +96,7 @@ export async function POST(request: NextRequest) {
         direccion: direccion,
         monto_recaudar: parseFloat(orden.current_total_price),
         estado: 'asignada',
-        motorizado_asignado: motorizadoDefault.id,
+        motorizado_asignado: motorizado.id,
         //observacion: `Pedido Shopify ${orden.name}${correo ? ` - Email: ${correo}` : ''}${orden.note ? ` - Nota: ${orden.note}` : ''}`,
         creado_por: userId,
         eliminado: false

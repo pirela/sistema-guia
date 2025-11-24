@@ -19,10 +19,10 @@ interface GuiaProducto {
 }
 
 interface GuiaConInfo extends Guia {
-  productos?: GuiaProducto[]
-  cantidad_novedades?: number
-  ultimo_usuario_id?: string | null
-  ultimo_usuario_novedad_id?: string | null
+  productos: GuiaProducto[]
+  cantidad_novedades: number
+  ultimo_usuario_id: string | null
+  ultimo_usuario_novedad_id: string | null
 }
 
 export default function GuiasPage() {

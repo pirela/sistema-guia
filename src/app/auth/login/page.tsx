@@ -3,22 +3,32 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/hooks/useAuth'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [checkingSession, setCheckingSession] = useState(true)
   const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
 
-  // Si el usuario está autenticado y cargado, redirigir al dashboard
+  // Verificar si ya hay una sesión activa (sin usar useAuth para evitar bucles)
   useEffect(() => {
-    if (!authLoading && user) {
-      router.push('/dashboard')
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) {
+          router.push('/dashboard')
+        } else {
+          setCheckingSession(false)
+        }
+      } catch (err) {
+        console.error('Error verificando sesión:', err)
+        setCheckingSession(false)
+      }
     }
-  }, [user, authLoading, router])
+    checkSession()
+  }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -49,6 +59,14 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-lg">Cargando...</div>
+      </div>
+    )
   }
 
   return (
@@ -103,7 +121,7 @@ export default function LoginPage() {
           </button>
         </form>
         <div className='flex justify-center mt-4'>
-          <span className="text-xs text-gray-500 text-center"> Versión 24-11-25 01 </span>
+          <span className="text-xs text-gray-500 text-center"> Versión 24-11-25 02 </span>
         </div>
       </div>
     </div>

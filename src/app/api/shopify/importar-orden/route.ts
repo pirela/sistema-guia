@@ -129,24 +129,74 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function buscarOCrearProducto(item: any) {
-  const sku = item.sku || `SHOPIFY-${item.id}`
-  
-  const { data: productoExistente } = await supabase
-    .from('productos')
-    .select('*')
-    .eq('codigo_sku', sku)
-    .single()
+// Función auxiliar para normalizar nombres de productos
+function normalizarNombre(nombre: string): string {
+  return nombre
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ') // Reemplazar múltiples espacios por uno solo
+    .replace(/[^\w\s]/g, '') // Remover caracteres especiales
+}
 
-  if (productoExistente) {
-    return productoExistente
+async function buscarOCrearProducto(item: any) {
+  const nombreProducto = item.title?.trim() || ''
+  const skuOriginal = item.sku?.trim() || null
+  
+  // Paso 1: Si hay SKU, buscar primero por SKU
+  if (skuOriginal) {
+    const { data: productoPorSku } = await supabase
+      .from('productos')
+      .select('*')
+      .eq('codigo_sku', skuOriginal)
+      .eq('eliminado', false)
+      .single()
+
+    if (productoPorSku) {
+      return productoPorSku
+    }
   }
+
+  // Paso 2: Buscar por nombre normalizado (solo si hay nombre)
+  if (nombreProducto) {
+    const nombreNormalizado = normalizarNombre(nombreProducto)
+    
+    // Obtener todos los productos activos y no eliminados
+    const { data: productos, error: errorBusqueda } = await supabase
+      .from('productos')
+      .select('*')
+      .eq('eliminado', false)
+      .eq('activo', true)
+
+    if (!errorBusqueda && productos) {
+      // Buscar producto con nombre normalizado similar
+      const productoExistente = productos.find(p => {
+        if (!p.nombre) return false
+        const nombreBDNormalizado = normalizarNombre(p.nombre)
+        return nombreBDNormalizado === nombreNormalizado
+      })
+
+      if (productoExistente) {
+        // Si encontramos por nombre pero no tenía SKU, actualizar el SKU si viene de Shopify
+        if (skuOriginal && !productoExistente.codigo_sku) {
+          await supabase
+            .from('productos')
+            .update({ codigo_sku: skuOriginal })
+            .eq('id', productoExistente.id)
+        }
+        return productoExistente
+      }
+    }
+  }
+
+  // Paso 3: Si no existe, crear nuevo producto
+  // Solo usar SHOPIFY-${item.id} como SKU si realmente no hay SKU
+  const skuFinal = skuOriginal || null // No generar SKU automático para evitar duplicados
 
   const { data: nuevoProducto, error } = await supabase
     .from('productos')
     .insert({
-      codigo_sku: sku,
-      nombre: item.title,
+      codigo_sku: skuFinal,
+      nombre: nombreProducto,
       precio: parseFloat(item.price),
       activo: true,
       eliminado: false

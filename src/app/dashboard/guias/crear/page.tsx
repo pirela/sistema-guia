@@ -168,6 +168,18 @@ export default function CrearGuiaPage() {
 
       clearCache('guias')
       alert('Guía creada exitosamente')
+      
+      // Limpiar el formulario después de crear exitosamente
+      setFormData({
+        nombre_cliente: '',
+        telefono_cliente: '',
+        direccion: '',
+        observacion: '',
+        motorizado_asignado: '',
+        monto_recaudar: '',
+      })
+      setProductosSeleccionados([])
+      
       //router.push('/dashboard/guias')
     } catch (error: any) {
       console.error('Error creando guía:', error)

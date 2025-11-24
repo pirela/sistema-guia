@@ -41,11 +41,11 @@ export default function Sidebar({ user, isOpen, onClose }: SidebarProps) {
       )}
 
       <aside
-        className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white shadow-md transform transition-transform duration-300 ease-in-out lg:transform-none ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-md transform transition-transform duration-300 ease-in-out flex flex-col ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0`}
       >
-        <div className="p-4 border-b flex justify-between items-center">
+        <div className="p-4 border-b flex justify-between items-center flex-shrink-0">
           <div>
             <h2 className="text-lg font-bold text-gray-800">Sistema de Guías</h2>
             <p className="text-sm text-gray-600">{user.nombre}</p>
@@ -59,7 +59,7 @@ export default function Sidebar({ user, isOpen, onClose }: SidebarProps) {
           </button>
         </div>
 
-        <nav className="p-4">
+        <nav className="p-4 flex-1 overflow-y-auto">
           <ul className="space-y-2">
             {links.map((link) => (
               <li key={link.href}>

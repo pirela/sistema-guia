@@ -16,9 +16,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/auth/login')
+      // Usar window.location.href para forzar recarga completa y evitar pantalla en blanco
+      window.location.href = '/auth/login'
     }
-  }, [user, loading, router])
+  }, [user, loading])
 
   if (loading) {
     return (
@@ -28,13 +29,21 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     )
   }
 
-  if (!user) return null
+  // Si no hay usuario después de cargar, mostrar estado de carga mientras se redirige
+  // Esto evita la pantalla en blanco
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-xl">Redirigiendo...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen bg-gray-100">
       <Sidebar user={user} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       
-      <div className="flex-1 flex flex-col w-full lg:w-auto">
+      <div className="flex-1 flex flex-col w-full lg:ml-64">
         <header className="bg-white shadow-sm sticky top-0 z-30">
           <div className="px-4 py-3 flex justify-between items-center">
             <div className="flex items-center gap-3">
@@ -57,7 +66,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </header>
 
-        <main className="flex-1 p-4 lg:p-8">
+        <main className="flex-1 p-4 lg:p-8 overflow-auto">
           {children}
         </main>
       </div>

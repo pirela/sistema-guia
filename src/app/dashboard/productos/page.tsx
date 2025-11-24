@@ -15,6 +15,10 @@ export default function ProductosPage() {
   const [editingProducto, setEditingProducto] = useState<Producto | null>(null)
   const [busqueda, setBusqueda] = useState('')
   
+  // Estados para ordenamiento
+  const [ordenarPor, setOrdenarPor] = useState<string>('nombre')
+  const [ordenDireccion, setOrdenDireccion] = useState<'asc' | 'desc'>('asc')
+  
   const [formData, setFormData] = useState({
     codigo_sku: '',
     nombre: '',
@@ -174,10 +178,89 @@ export default function ProductosPage() {
     }
   }
 
-  const productosFiltrados = productos.filter(p => 
-    p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    p.codigo_sku?.toLowerCase().includes(busqueda.toLowerCase())
+  // Función para ordenar los productos
+  const ordenarProductos = (productosParaOrdenar: Producto[]) => {
+    const productosOrdenados = [...productosParaOrdenar]
+    
+    productosOrdenados.sort((a, b) => {
+      let valorA: any
+      let valorB: any
+      
+      switch (ordenarPor) {
+        case 'codigo_sku':
+          valorA = (a.codigo_sku || '').toLowerCase()
+          valorB = (b.codigo_sku || '').toLowerCase()
+          break
+        case 'nombre':
+          valorA = a.nombre.toLowerCase()
+          valorB = b.nombre.toLowerCase()
+          break
+        case 'descripcion':
+          valorA = (a.descripcion || '').toLowerCase()
+          valorB = (b.descripcion || '').toLowerCase()
+          break
+        case 'precio':
+          valorA = a.precio
+          valorB = b.precio
+          break
+        case 'activo':
+          valorA = a.activo ? 1 : 0
+          valorB = b.activo ? 1 : 0
+          break
+        default:
+          return 0
+      }
+      
+      if (valorA < valorB) return ordenDireccion === 'asc' ? -1 : 1
+      if (valorA > valorB) return ordenDireccion === 'asc' ? 1 : -1
+      return 0
+    })
+    
+    return productosOrdenados
+  }
+
+  // Filtrar y ordenar los productos
+  const productosFiltrados = ordenarProductos(
+    productos.filter(p => 
+      p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+      p.codigo_sku?.toLowerCase().includes(busqueda.toLowerCase())
+    )
   )
+
+  // Función para manejar el clic en el header de ordenamiento
+  const handleOrdenar = (campo: string) => {
+    if (ordenarPor === campo) {
+      setOrdenDireccion(ordenDireccion === 'asc' ? 'desc' : 'asc')
+    } else {
+      setOrdenarPor(campo)
+      setOrdenDireccion('asc')
+    }
+  }
+
+  // Función para obtener el icono de ordenamiento
+  const getSortIcon = (campo: string) => {
+    if (ordenarPor !== campo) {
+      return (
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+        </svg>
+      )
+    }
+    
+    if (ordenDireccion === 'asc') {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+        </svg>
+      )
+    } else {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      )
+    }
+  }
   /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
@@ -221,20 +304,50 @@ export default function ProductosPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  SKU
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('codigo_sku')}
+                >
+                  <div className="flex items-center gap-2">
+                    SKU
+                    {getSortIcon('codigo_sku')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Nombre
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('nombre')}
+                >
+                  <div className="flex items-center gap-2">
+                    Nombre
+                    {getSortIcon('nombre')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Descripción
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('descripcion')}
+                >
+                  <div className="flex items-center gap-2">
+                    Descripción
+                    {getSortIcon('descripcion')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Precio
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('precio')}
+                >
+                  <div className="flex items-center gap-2">
+                    Precio
+                    {getSortIcon('precio')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('activo')}
+                >
+                  <div className="flex items-center gap-2">
+                    Estado
+                    {getSortIcon('activo')}
+                  </div>
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones

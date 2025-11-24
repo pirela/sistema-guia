@@ -17,8 +17,19 @@ export function useAuth() {
       // Timeout de seguridad para fetchUserData
       const fetchTimeoutId = setTimeout(() => {
         if (isMounted()) {
-          console.warn('Timeout en fetchUserData, forzando loading a false')
-          setLoading(false)
+          console.warn('Timeout en fetchUserData')
+          // No establecer loading=false aquí si no hay usuario, mejor redirigir
+          const checkSession = async () => {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+              setUser(null)
+              setLoading(false)
+              window.location.href = '/auth/login'
+            } else {
+              setLoading(false)
+            }
+          }
+          checkSession()
         }
       }, 2500)
 
@@ -45,20 +56,13 @@ export function useAuth() {
       console.error('Error fetching user data:', error)
       
       if (isMounted()) {
+        // Cerrar sesión y limpiar estados
+        await supabase.auth.signOut()
         setUser(null)
         setLoading(false)
         
-        // Si el error indica que el usuario no existe o no está activo, cerrar sesión
-        if (error?.code === 'PGRST116' || // No encontrado
-            error?.message?.includes('No rows returned') ||
-            error?.code === '23505') { // Violación de constraint
-          await supabase.auth.signOut()
-          router.push('/auth/login')
-        } else {
-          // Para otros errores, también cerrar sesión por seguridad
-          await supabase.auth.signOut()
-          router.push('/auth/login')
-        }
+        // Redirigir al login
+        window.location.href = '/auth/login'
       }
     }
   }
@@ -72,10 +76,16 @@ export function useAuth() {
     const checkUser = async () => {
       try {
         // Timeout de seguridad: máximo 5 segundos para verificar sesión
-        timeoutId = setTimeout(() => {
+        timeoutId = setTimeout(async () => {
           if (mounted) {
-            console.warn('Timeout en checkUser, forzando loading a false')
-            setLoading(false)
+            console.warn('Timeout en checkUser')
+            // Verificar si hay sesión antes de establecer loading=false
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+              window.location.href = '/auth/login'
+            } else {
+              setLoading(false)
+            }
           }
         }, 5000)
 
@@ -88,7 +98,7 @@ export function useAuth() {
             setUser(null)
             setLoading(false)
             await supabase.auth.signOut()
-            router.push('/auth/login')
+            window.location.href = '/auth/login'
           }
           return
         }
@@ -98,6 +108,8 @@ export function useAuth() {
           if (mounted) {
             setUser(null)
             setLoading(false)
+            // Si no hay sesión, redirigir al login
+            window.location.href = '/auth/login'
           }
           return
         }
@@ -110,7 +122,7 @@ export function useAuth() {
             setUser(null)
             setLoading(false)
             await supabase.auth.signOut()
-            router.push('/auth/login')
+            window.location.href = '/auth/login'
           }
           return
         }
@@ -125,18 +137,17 @@ export function useAuth() {
           // Si hay error, cerrar sesión y redirigir
           try {
             await supabase.auth.signOut()
-            router.push('/auth/login')
           } catch (signOutError) {
             console.error('Error al cerrar sesión:', signOutError)
           }
+          window.location.href = '/auth/login'
         }
       } finally {
         if (timeoutId) {
           clearTimeout(timeoutId)
         }
-        if (mounted) {
-          setLoading(false)
-        }
+        // No establecer loading=false en el finally si ya se redirigió
+        // El loading se maneja en cada caso específico
       }
     }
 
@@ -162,7 +173,7 @@ export function useAuth() {
             setUser(null)
             setLoading(false)
             await supabase.auth.signOut()
-            router.push('/auth/login')
+            window.location.href = '/auth/login'
             return
           }
           await fetchUserData(session.user.id, isMounted)
@@ -170,9 +181,9 @@ export function useAuth() {
           if (event === 'SIGNED_OUT') {
             setUser(null)
             setLoading(false)
-            // Solo usar router.push si no estamos haciendo logout manual
+            // Solo redirigir si no estamos haciendo logout manual
             if (!isSigningOutRef.current) {
-              router.push('/auth/login')
+              window.location.href = '/auth/login'
             }
           } else if (event === 'TOKEN_REFRESHED' && session) {
             // Si el token se refrescó, verificar que el usuario siga siendo válido

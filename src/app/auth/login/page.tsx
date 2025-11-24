@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -10,6 +11,14 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const router = useRouter()
+  const { user, loading: authLoading } = useAuth()
+
+  // Si el usuario está autenticado y cargado, redirigir al dashboard
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.push('/dashboard')
+    }
+  }, [user, authLoading, router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,7 +103,7 @@ export default function LoginPage() {
           </button>
         </form>
         <div className='flex justify-center mt-4'>
-          <span className="text-xs text-gray-500 text-center"> Versión 23-11-25 </span>
+          <span className="text-xs text-gray-500 text-center"> Versión 24-11-25 01 </span>
         </div>
       </div>
     </div>

@@ -5,7 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { EstadoGuia, Guia } from '@/types/database'
+import { EstadoGuia, Guia, Usuario } from '@/types/database'
 
 interface EstadisticasMotorizado {
   motorizado_id: string
@@ -60,16 +60,118 @@ export default function ReportesPage() {
   const [filtroEstados, setFiltroEstados] = useState<EstadoGuia[]>([])
   const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
   const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>('')
+  const [filtroMotorizado, setFiltroMotorizado] = useState<string>('')
+  const [motorizados, setMotorizados] = useState<Usuario[]>([])
+  const [cargandoMotorizados, setCargandoMotorizados] = useState(false)
   const [mostrarFiltroEstados, setMostrarFiltroEstados] = useState(false)
   const filtroEstadosRef = useRef<HTMLDivElement>(null)
   
+  // Estados para ordenamiento del reporte
+  const [ordenarPor, setOrdenarPor] = useState<string>('fecha_actualizacion')
+  const [ordenDireccion, setOrdenDireccion] = useState<'asc' | 'desc'>('desc')
+  
   const ESTADOS_DISPONIBLES: EstadoGuia[] = ['pendiente', 'asignada', 'en_ruta', 'entregada', 'finalizada', 'cancelada', 'rechazada', 'novedad']
+
+  // Función para ordenar las guías del reporte
+  const ordenarGuiasReporte = (guiasParaOrdenar: GuiaReporte[]) => {
+    const guiasOrdenadas = [...guiasParaOrdenar]
+    
+    guiasOrdenadas.sort((a, b) => {
+      let valorA: any
+      let valorB: any
+      
+      switch (ordenarPor) {
+        case 'numero_guia':
+          valorA = a.numero_guia
+          valorB = b.numero_guia
+          break
+        case 'monto_recaudar':
+          valorA = a.monto_recaudar
+          valorB = b.monto_recaudar
+          break
+        case 'fecha_actualizacion':
+          valorA = new Date(a.fecha_actualizacion).getTime()
+          valorB = new Date(b.fecha_actualizacion).getTime()
+          break
+        case 'estado':
+          valorA = a.estado
+          valorB = b.estado
+          break
+        default:
+          return 0
+      }
+      
+      if (valorA < valorB) return ordenDireccion === 'asc' ? -1 : 1
+      if (valorA > valorB) return ordenDireccion === 'asc' ? 1 : -1
+      return 0
+    })
+    
+    return guiasOrdenadas
+  }
+
+  // Función para manejar el clic en el header de ordenamiento
+  const handleOrdenar = (campo: string) => {
+    if (ordenarPor === campo) {
+      setOrdenDireccion(ordenDireccion === 'asc' ? 'desc' : 'asc')
+    } else {
+      setOrdenarPor(campo)
+      setOrdenDireccion('asc')
+    }
+  }
+
+  // Función para obtener el icono de ordenamiento
+  const getSortIcon = (campo: string) => {
+    if (ordenarPor !== campo) {
+      return (
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+        </svg>
+      )
+    }
+    
+    if (ordenDireccion === 'asc') {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+        </svg>
+      )
+    } else {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      )
+    }
+  }
+
+  const guiasReporteOrdenadas = ordenarGuiasReporte(guiasReporte)
 
   useEffect(() => {
     if (user?.rol === 'administrador') {
       fetchReportes()
+      fetchMotorizados()
     }
   }, [user])
+
+  const fetchMotorizados = async () => {
+    setCargandoMotorizados(true)
+    try {
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('rol', 'motorizado')
+        .eq('activo', true)
+        .eq('eliminado', false)
+        .order('nombre', { ascending: true })
+
+      if (error) throw error
+      setMotorizados(data || [])
+    } catch (error) {
+      console.error('Error fetching motorizados:', error)
+    } finally {
+      setCargandoMotorizados(false)
+    }
+  }
 
    const fetchReportes = async () => {
     try {
@@ -199,6 +301,11 @@ export default function ReportesPage() {
         const fechaHastaFin = new Date(filtroFechaHasta)
         fechaHastaFin.setHours(23, 59, 59, 999)
         queryBuilder = queryBuilder.lte('fecha_actualizacion', fechaHastaFin.toISOString())
+      }
+
+      // Aplicar filtro por motorizado
+      if (filtroMotorizado) {
+        queryBuilder = queryBuilder.eq('motorizado_asignado', filtroMotorizado)
       }
 
       // Aplicar ordenamiento
@@ -643,6 +750,33 @@ export default function ReportesPage() {
                 )}
               </div>
 
+              {/* Filtro por Motorizado */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600 whitespace-nowrap">Motorizado:</span>
+                <select
+                  value={filtroMotorizado}
+                  onChange={(e) => setFiltroMotorizado(e.target.value)}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]"
+                  disabled={cargandoMotorizados}
+                >
+                  <option value="">Todos los motorizados</option>
+                  {motorizados.map((motorizado) => (
+                    <option key={motorizado.id} value={motorizado.id}>
+                      {motorizado.nombre}
+                    </option>
+                  ))}
+                </select>
+                {filtroMotorizado && (
+                  <button
+                    onClick={() => setFiltroMotorizado('')}
+                    className="px-2 py-1 text-sm text-gray-600 hover:text-gray-800"
+                    title="Limpiar motorizado"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
               {/* Botón Buscar */}
               <button
                 onClick={buscarGuiasReporte}
@@ -665,12 +799,13 @@ export default function ReportesPage() {
               </button>
 
               {/* Botón Limpiar Todos los Filtros */}
-              {(filtroEstados.length > 0 || filtroFechaDesde || filtroFechaHasta) && (
+              {(filtroEstados.length > 0 || filtroFechaDesde || filtroFechaHasta || filtroMotorizado) && (
                 <button
                   onClick={() => {
                     setFiltroEstados([])
                     setFiltroFechaDesde('')
                     setFiltroFechaHasta('')
+                    setFiltroMotorizado('')
                     setGuiasReporte([])
                   }}
                   className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-md hover:bg-gray-50"
@@ -681,7 +816,7 @@ export default function ReportesPage() {
             </div>
 
             {/* Info de filtros activos */}
-            {(filtroEstados.length > 0 || filtroFechaDesde || filtroFechaHasta) && (
+            {(filtroEstados.length > 0 || filtroFechaDesde || filtroFechaHasta || filtroMotorizado) && (
               <div className="text-xs text-gray-500 space-y-1">
                 {filtroEstados.length > 0 && (
                   <p>
@@ -696,6 +831,11 @@ export default function ReportesPage() {
                 {filtroFechaHasta && (
                   <p>
                     Hasta: <span className="font-semibold">{new Date(filtroFechaHasta).toLocaleDateString('es-ES')}</span> (ambas fechas inclusivas)
+                  </p>
+                )}
+                {filtroMotorizado && (
+                  <p>
+                    Motorizado: <span className="font-semibold">{motorizados.find(m => m.id === filtroMotorizado)?.nombre || 'N/A'}</span>
                   </p>
                 )}
               </div>
@@ -727,29 +867,53 @@ export default function ReportesPage() {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Número de Guía
+                      <th 
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleOrdenar('numero_guia')}
+                      >
+                        <div className="flex items-center gap-2">
+                          Número de Guía
+                          {getSortIcon('numero_guia')}
+                        </div>
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Monto a Recaudar
+                      <th 
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleOrdenar('monto_recaudar')}
+                      >
+                        <div className="flex items-center gap-2">
+                          Monto a Recaudar
+                          {getSortIcon('monto_recaudar')}
+                        </div>
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Última Fecha de Cambio
+                      <th 
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleOrdenar('fecha_actualizacion')}
+                      >
+                        <div className="flex items-center gap-2">
+                          Última Fecha de Cambio
+                          {getSortIcon('fecha_actualizacion')}
+                        </div>
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Estado Actual
+                      <th 
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleOrdenar('estado')}
+                      >
+                        <div className="flex items-center gap-2">
+                          Estado Actual
+                          {getSortIcon('estado')}
+                        </div>
                       </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {guiasReporte.length === 0 ? (
+                    {guiasReporteOrdenadas.length === 0 ? (
                       <tr>
                         <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
                           No se encontraron guías con los filtros seleccionados
                         </td>
                       </tr>
                     ) : (
-                      guiasReporte.map((guia) => (
+                      guiasReporteOrdenadas.map((guia) => (
                         <tr key={guia.id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                             {guia.numero_guia}
@@ -778,14 +942,15 @@ export default function ReportesPage() {
                 </table>
               </div>
 
+
               {/* Vista móvil */}
               <div className="md:hidden space-y-3">
-                {guiasReporte.length === 0 ? (
+                {guiasReporteOrdenadas.length === 0 ? (
                   <div className="text-center text-gray-500 py-4">
                     No se encontraron guías con los filtros seleccionados
                   </div>
                 ) : (
-                  guiasReporte.map((guia) => (
+                  guiasReporteOrdenadas.map((guia) => (
                     <div key={guia.id} className="border rounded-lg p-4 space-y-2">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">

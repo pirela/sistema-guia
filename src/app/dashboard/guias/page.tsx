@@ -33,9 +33,14 @@ export default function GuiasPage() {
   const [loading, setLoading] = useState(true)
   const [filtroEstado, setFiltroEstado] = useState<string[]>([])
   const [filtroNombreCliente, setFiltroNombreCliente] = useState<string>('')
+  const [filtroMotorizado, setFiltroMotorizado] = useState<string>('')
   const [mostrarFiltroEstado, setMostrarFiltroEstado] = useState(false)
   const [filtroNombreClienteDebounced, setFiltroNombreClienteDebounced] = useState<string>('')
   const filtroEstadoRef = useRef<HTMLDivElement>(null)
+  
+  // Estados para ordenamiento
+  const [ordenarPor, setOrdenarPor] = useState<string>('fecha_creacion')
+  const [ordenDireccion, setOrdenDireccion] = useState<'asc' | 'desc'>('desc')
   
   // Obtener fecha de hoy en formato YYYY-MM-DD para el input date + 7 días
   const hoy = new Date(new Date().setDate(new Date().getDate() + 7)).toISOString().split('T')[0]
@@ -97,10 +102,15 @@ export default function GuiasPage() {
         query = query.lte('fecha_creacion', fechaHastaFin.toISOString())
       }
 
+      // Aplicar filtro por motorizado
+      if (filtroMotorizado) {
+        query = query.eq('motorizado_asignado', filtroMotorizado)
+      }
+
       query = query.order('fecha_creacion', { ascending: false })
 
       const result = await cachedFetch(
-        `guias-${filtroNombreClienteDebounced}-${filtroFechaDesde}-${filtroFechaHasta}`,
+        `guias-${filtroNombreClienteDebounced}-${filtroFechaDesde}-${filtroFechaHasta}-${filtroMotorizado}`,
         async () => {
           return await query
         }
@@ -110,63 +120,141 @@ export default function GuiasPage() {
       const guiasData = result.data || []
 
       // Obtener productos, conteo de novedades y último usuario que modificó para cada guía
-      const guiasConInfo = await Promise.all(
+      // Usar Promise.allSettled para manejar errores individuales sin romper todo el proceso
+      const resultados = await Promise.allSettled(
         guiasData.map(async (guia: Guia) => {
-          // Obtener productos
-          const productosResult = await cachedFetch(
-            `guia-productos-${guia.id}`,
-            async () => {
-              return await supabase
-                .from('guias_productos')
-                .select(`
-                  *,
-                  producto:productos(*)
-                `)
+          try {
+            // Obtener productos con timeout
+            let productosResult: { data: GuiaProducto[] | null; error: any } = { data: [], error: null }
+            try {
+              const productosQueryPromise = cachedFetch(
+                `guia-productos-${guia.id}`,
+                async () => {
+                  return await supabase
+                    .from('guias_productos')
+                    .select(`
+                      *,
+                      producto:productos(*)
+                    `)
+                    .eq('guia_id', guia.id)
+                },
+                8000
+              )
+              
+              productosResult = await Promise.race([
+                productosQueryPromise,
+                new Promise<{ data: null; error: Error }>((_, reject) => 
+                  setTimeout(() => reject(new Error(`Timeout obteniendo productos para guía ${guia.id}`)), 8000)
+                )
+              ]) as { data: GuiaProducto[] | null; error: any }
+              
+              if (productosResult.error) throw productosResult.error
+            } catch (error) {
+              console.error(`Error obteniendo productos para guía ${guia.id}:`, error)
+              productosResult = { data: [], error: null }
+            }
+
+            // Contar novedades con timeout
+            let novedadesCount = 0
+            try {
+              const countQuery = supabase
+                .from('novedades')
+                .select('*', { count: 'exact', head: true })
                 .eq('guia_id', guia.id)
-            },
-            15000
-          )
+              
+              const countResult = await Promise.race([
+                countQuery,
+                new Promise<{ count: null }>((_, reject) => 
+                  setTimeout(() => reject(new Error(`Timeout contando novedades para guía ${guia.id}`)), 5000)
+                )
+              ]) as { count: number | null }
+              
+              novedadesCount = countResult.count || 0
+            } catch (error) {
+              console.error(`Error contando novedades para guía ${guia.id}:`, error)
+              novedadesCount = 0
+            }
 
-          // Contar novedades
-          const { count: novedadesCount } = await supabase
-            .from('novedades')
-            .select('*', { count: 'exact', head: true })
-            .eq('guia_id', guia.id)
+            // Obtener última novedad con timeout
+            let ultimoUsuarioNovedadId: string | null = null
+            try {
+              const ultimaNovedadQuery = supabase
+                .from('novedades')
+                .select('usuario_id')
+                .eq('guia_id', guia.id)
+                .order('fecha_creacion', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+              
+              const ultimaNovedadResult = await Promise.race([
+                ultimaNovedadQuery,
+                new Promise<{ data: null }>((_, reject) => 
+                  setTimeout(() => reject(new Error(`Timeout obteniendo última novedad para guía ${guia.id}`)), 5000)
+                )
+              ]) as { data: { usuario_id: string } | null }
+              
+              ultimoUsuarioNovedadId = ultimaNovedadResult.data?.usuario_id || null
+            } catch (error) {
+              console.error(`Error obteniendo última novedad para guía ${guia.id}:`, error)
+              ultimoUsuarioNovedadId = null
+            }
 
-          // Obtener última novedad para saber quién la creó
-          const { data: ultimaNovedadData } = await supabase
-            .from('novedades')
-            .select('usuario_id')
-            .eq('guia_id', guia.id)
-            .order('fecha_creacion', { ascending: false })
-            .limit(1)
-            .maybeSingle()
+            // Obtener último usuario que modificó desde historial_estado con timeout
+            let usuarioIdModifico: string | null = null
+            try {
+              const historialQuery = supabase
+                .from('historial_estado')
+                .select('usuario_id')
+                .eq('guia_id', guia.id)
+                .order('fecha_cambio', { ascending: false })
+                .limit(1)
+              
+              const historialResult = await Promise.race([
+                historialQuery,
+                new Promise<{ data: null }>((_, reject) => 
+                  setTimeout(() => reject(new Error(`Timeout obteniendo historial para guía ${guia.id}`)), 5000)
+                )
+              ]) as { data: { usuario_id: string }[] | null }
+              
+              usuarioIdModifico = historialResult.data && historialResult.data.length > 0 
+                ? historialResult.data[0].usuario_id 
+                : null
+            } catch (error) {
+              console.error(`Error obteniendo historial para guía ${guia.id}:`, error)
+              usuarioIdModifico = null
+            }
 
-          // Obtener último usuario que creó una novedad
-          const ultimoUsuarioNovedadId = ultimaNovedadData?.usuario_id || null
-
-          // Obtener último usuario que modificó desde historial_estado
-          const { data: ultimoHistorialData } = await supabase
-            .from('historial_estado')
-            .select('usuario_id')
-            .eq('guia_id', guia.id)
-            .order('fecha_cambio', { ascending: false })
-            .limit(1)
-
-          // Usar el usuario del historial o null si no hay
-          const usuarioIdModifico = ultimoHistorialData && ultimoHistorialData.length > 0 
-            ? ultimoHistorialData[0].usuario_id 
-            : null
-
-          return {
-            ...guia,
-            productos: productosResult.data as GuiaProducto[] || [],
-            cantidad_novedades: novedadesCount || 0,
-            ultimo_usuario_id: usuarioIdModifico,
-            ultimo_usuario_novedad_id: ultimoUsuarioNovedadId,
+            return {
+              ...guia,
+              productos: productosResult.data as GuiaProducto[] || [],
+              cantidad_novedades: novedadesCount,
+              ultimo_usuario_id: usuarioIdModifico,
+              ultimo_usuario_novedad_id: ultimoUsuarioNovedadId,
+            }
+          } catch (error) {
+            console.error(`Error procesando guía ${guia.id}:`, error)
+            // Retornar la guía con datos mínimos si hay error
+            return {
+              ...guia,
+              productos: [],
+              cantidad_novedades: 0,
+              ultimo_usuario_id: null,
+              ultimo_usuario_novedad_id: null,
+            }
           }
         })
       )
+
+      // Procesar resultados de Promise.allSettled
+      const guiasConInfo = resultados.map((resultado) => {
+        if (resultado.status === 'fulfilled') {
+          return resultado.value
+        } else {
+          console.error('Error en Promise.allSettled:', resultado.reason)
+          // Retornar un objeto vacío o la guía básica si falla
+          return null
+        }
+      }).filter((guia): guia is GuiaConInfo => guia !== null)
 
       setGuias(guiasConInfo)
     } catch (error) {
@@ -174,7 +262,7 @@ export default function GuiasPage() {
     } finally {
       setLoading(false)
     }
-  }, [filtroNombreClienteDebounced, filtroFechaDesde, filtroFechaHasta])
+  }, [filtroNombreClienteDebounced, filtroFechaDesde, filtroFechaHasta, filtroMotorizado])
 
   useEffect(() => {
     if (!authLoading && user?.rol === 'administrador') {
@@ -201,21 +289,17 @@ export default function GuiasPage() {
 
   const fetchMotorizados = async () => {
     try {
-      const result = await cachedFetch(
-        'motorizados',
-        async () => {
-          return await supabase
-            .from('usuarios')
-            .select('*')
-            .eq('rol', 'motorizado')
-            .eq('eliminado', false)
-        }
-      )
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('rol', 'motorizado')
+        .eq('eliminado', false)
+        .order('nombre', { ascending: true })
 
-      if (result.error) throw result.error
+      if (error) throw error
       
       const motorizadosMap: { [key: string]: Usuario } = {}
-      result.data?.forEach((m) => {
+      data?.forEach((m) => {
         motorizadosMap[m.id] = m
       })
       setMotorizados(motorizadosMap)
@@ -261,9 +345,98 @@ export default function GuiasPage() {
     return colors[estado] || 'bg-gray-100 text-gray-800'
   }
 
-  const guiasFiltradas = filtroEstado.length === 0
-    ? guias 
-    : guias.filter(g => filtroEstado.includes(g.estado))
+  // Función para ordenar las guías
+  const ordenarGuias = (guiasParaOrdenar: GuiaConInfo[]) => {
+    const guiasOrdenadas = [...guiasParaOrdenar]
+    
+    guiasOrdenadas.sort((a, b) => {
+      let valorA: any
+      let valorB: any
+      
+      switch (ordenarPor) {
+        case 'numero_guia':
+          valorA = a.numero_guia
+          valorB = b.numero_guia
+          break
+        case 'nombre_cliente':
+          valorA = a.nombre_cliente.toLowerCase()
+          valorB = b.nombre_cliente.toLowerCase()
+          break
+        case 'motorizado':
+          valorA = (motorizados[a.motorizado_asignado]?.nombre || '').toLowerCase()
+          valorB = (motorizados[b.motorizado_asignado]?.nombre || '').toLowerCase()
+          break
+        case 'estado':
+          valorA = a.estado
+          valorB = b.estado
+          break
+        case 'monto_recaudar':
+          valorA = a.monto_recaudar
+          valorB = b.monto_recaudar
+          break
+        case 'fecha_creacion':
+          valorA = new Date(a.fecha_creacion).getTime()
+          valorB = new Date(b.fecha_creacion).getTime()
+          break
+        case 'cantidad_novedades':
+          valorA = a.cantidad_novedades || 0
+          valorB = b.cantidad_novedades || 0
+          break
+        default:
+          return 0
+      }
+      
+      if (valorA < valorB) return ordenDireccion === 'asc' ? -1 : 1
+      if (valorA > valorB) return ordenDireccion === 'asc' ? 1 : -1
+      return 0
+    })
+    
+    return guiasOrdenadas
+  }
+
+  // Filtrar y ordenar las guías
+  const guiasFiltradas = ordenarGuias(
+    filtroEstado.length === 0
+      ? guias 
+      : guias.filter(g => filtroEstado.includes(g.estado))
+  )
+
+  // Función para manejar el clic en el header de ordenamiento
+  const handleOrdenar = (campo: string) => {
+    if (ordenarPor === campo) {
+      // Si ya está ordenando por este campo, cambiar la dirección
+      setOrdenDireccion(ordenDireccion === 'asc' ? 'desc' : 'asc')
+    } else {
+      // Si es un campo nuevo, ordenar ascendente por defecto
+      setOrdenarPor(campo)
+      setOrdenDireccion('asc')
+    }
+  }
+
+  // Función para obtener el icono de ordenamiento
+  const getSortIcon = (campo: string) => {
+    if (ordenarPor !== campo) {
+      return (
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+        </svg>
+      )
+    }
+    
+    if (ordenDireccion === 'asc') {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+        </svg>
+      )
+    } else {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      )
+    }
+  }
   /*
   if (!user || user.rol !== 'administrador') {
     return <div>No tienes permisos para ver esta página</div>
@@ -312,6 +485,23 @@ export default function GuiasPage() {
                 placeholder="Escribe el nombre del cliente..."
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+            <div className="sm:w-64">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Filtrar por motorizado:
+              </label>
+              <select
+                value={filtroMotorizado}
+                onChange={(e) => setFiltroMotorizado(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="">Todos los motorizados</option>
+                {Object.values(motorizados).map((motorizado) => (
+                  <option key={motorizado.id} value={motorizado.id}>
+                    {motorizado.nombre}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="sm:w-64 relative" ref={filtroEstadoRef}>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -426,10 +616,21 @@ export default function GuiasPage() {
                 </button>
               </div>
             )}
+            {filtroMotorizado && (
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => setFiltroMotorizado('')}
+                  className="px-4 py-2.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-300 rounded-md hover:bg-blue-50"
+                >
+                  Limpiar motorizado
+                </button>
+              </div>
+            )}
           </div>
-          {filtroEstado.length > 0 && (
+          {(filtroEstado.length > 0 || filtroMotorizado) && (
             <div className="flex flex-wrap gap-2">
-              {filtroEstado.map((estado) => (
+              {filtroEstado.length > 0 && filtroEstado.map((estado) => (
                 <span
                   key={estado}
                   className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
@@ -444,6 +645,20 @@ export default function GuiasPage() {
                   </button>
                 </span>
               ))}
+              {filtroMotorizado && motorizados[filtroMotorizado] && (
+                <span
+                  className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                >
+                  Motorizado: {motorizados[filtroMotorizado].nombre}
+                  <button
+                    type="button"
+                    onClick={() => setFiltroMotorizado('')}
+                    className="ml-2 text-green-600 hover:text-green-800"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -452,26 +667,68 @@ export default function GuiasPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Número
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('numero_guia')}
+                >
+                  <div className="flex items-center gap-2">
+                    Número
+                    {getSortIcon('numero_guia')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Cliente
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('nombre_cliente')}
+                >
+                  <div className="flex items-center gap-2">
+                    Cliente
+                    {getSortIcon('nombre_cliente')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Motorizado
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('motorizado')}
+                >
+                  <div className="flex items-center gap-2">
+                    Motorizado
+                    {getSortIcon('motorizado')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('estado')}
+                >
+                  <div className="flex items-center gap-2">
+                    Estado
+                    {getSortIcon('estado')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Monto
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('monto_recaudar')}
+                >
+                  <div className="flex items-center gap-2">
+                    Monto
+                    {getSortIcon('monto_recaudar')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fecha
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('fecha_creacion')}
+                >
+                  <div className="flex items-center gap-2">
+                    Fecha
+                    {getSortIcon('fecha_creacion')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Novedades
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('cantidad_novedades')}
+                >
+                  <div className="flex items-center gap-2">
+                    Novedades
+                    {getSortIcon('cantidad_novedades')}
+                  </div>
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones

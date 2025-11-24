@@ -16,6 +16,10 @@ export default function UsuariosPage() {
   const [editingUsuario, setEditingUsuario] = useState<Usuario | null>(null)
   const [filtroRol, setFiltroRol] = useState<string>('todos')
   
+  // Estados para ordenamiento
+  const [ordenarPor, setOrdenarPor] = useState<string>('nombre')
+  const [ordenDireccion, setOrdenDireccion] = useState<'asc' | 'desc'>('asc')
+  
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -202,9 +206,88 @@ export default function UsuariosPage() {
     }
   }
 
-  const usuariosFiltrados = filtroRol === 'todos' 
-    ? usuarios 
-    : usuarios.filter(u => u.rol === filtroRol)
+  // Función para ordenar los usuarios
+  const ordenarUsuarios = (usuariosParaOrdenar: Usuario[]) => {
+    const usuariosOrdenados = [...usuariosParaOrdenar]
+    
+    usuariosOrdenados.sort((a, b) => {
+      let valorA: any
+      let valorB: any
+      
+      switch (ordenarPor) {
+        case 'username':
+          valorA = a.username.toLowerCase()
+          valorB = b.username.toLowerCase()
+          break
+        case 'nombre':
+          valorA = a.nombre.toLowerCase()
+          valorB = b.nombre.toLowerCase()
+          break
+        case 'email':
+          valorA = a.email.toLowerCase()
+          valorB = b.email.toLowerCase()
+          break
+        case 'rol':
+          valorA = a.rol
+          valorB = b.rol
+          break
+        case 'activo':
+          valorA = a.activo ? 1 : 0
+          valorB = b.activo ? 1 : 0
+          break
+        default:
+          return 0
+      }
+      
+      if (valorA < valorB) return ordenDireccion === 'asc' ? -1 : 1
+      if (valorA > valorB) return ordenDireccion === 'asc' ? 1 : -1
+      return 0
+    })
+    
+    return usuariosOrdenados
+  }
+
+  // Filtrar y ordenar los usuarios
+  const usuariosFiltrados = ordenarUsuarios(
+    filtroRol === 'todos' 
+      ? usuarios 
+      : usuarios.filter(u => u.rol === filtroRol)
+  )
+
+  // Función para manejar el clic en el header de ordenamiento
+  const handleOrdenar = (campo: string) => {
+    if (ordenarPor === campo) {
+      setOrdenDireccion(ordenDireccion === 'asc' ? 'desc' : 'asc')
+    } else {
+      setOrdenarPor(campo)
+      setOrdenDireccion('asc')
+    }
+  }
+
+  // Función para obtener el icono de ordenamiento
+  const getSortIcon = (campo: string) => {
+    if (ordenarPor !== campo) {
+      return (
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+        </svg>
+      )
+    }
+    
+    if (ordenDireccion === 'asc') {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+        </svg>
+      )
+    } else {
+      return (
+        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      )
+    }
+  }
 
   const contadores = {
     todos: usuarios.length,
@@ -280,20 +363,50 @@ export default function UsuariosPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Username
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('username')}
+                >
+                  <div className="flex items-center gap-2">
+                    Username
+                    {getSortIcon('username')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Nombre
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('nombre')}
+                >
+                  <div className="flex items-center gap-2">
+                    Nombre
+                    {getSortIcon('nombre')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Email
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('email')}
+                >
+                  <div className="flex items-center gap-2">
+                    Email
+                    {getSortIcon('email')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Rol
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('rol')}
+                >
+                  <div className="flex items-center gap-2">
+                    Rol
+                    {getSortIcon('rol')}
+                  </div>
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleOrdenar('activo')}
+                >
+                  <div className="flex items-center gap-2">
+                    Estado
+                    {getSortIcon('activo')}
+                  </div>
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones

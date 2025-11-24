@@ -10,14 +10,15 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession()
 
+  // Solo proteger /dashboard si NO hay sesión
+  // NO redirigir automáticamente de /auth/login a /dashboard
+  // Dejar que el cliente (useAuth) valide completamente al usuario
   if (!session && req.nextUrl.pathname.startsWith('/dashboard')) {
     return NextResponse.redirect(new URL('/auth/login', req.url))
   }
 
-  if (session && req.nextUrl.pathname === '/auth/login') {
-    return NextResponse.redirect(new URL('/dashboard', req.url))
-  }
-
+  // Permitir acceso a /auth/login siempre, sin importar si hay sesión
+  // El cliente manejará la validación y redirección si es necesario
   return res
 }
 

@@ -11,6 +11,7 @@ export default function ImportarOrdenShopify() {
   const router = useRouter()
   const [orderNumber, setOrderNumber] = useState('')
   const [motorizadoId, setMotorizadoId] = useState('')
+  const [observacion, setObservacion] = useState('')
   const [motorizados, setMotorizados] = useState<Usuario[]>([])
   const [cargandoMotorizados, setCargandoMotorizados] = useState(true)
   const [importando, setImportando] = useState(false)
@@ -71,7 +72,8 @@ export default function ImportarOrdenShopify() {
         body: JSON.stringify({
           orderNumber: orderNumber.trim(),
           userId: user?.id,
-          motorizadoId: motorizadoId
+          motorizadoId: motorizadoId,
+          observacion: observacion.trim() || null
         })
       })
 
@@ -80,6 +82,7 @@ export default function ImportarOrdenShopify() {
       if (response.ok) {
         setMensaje({ tipo: 'success', texto: data.mensaje })
         setOrderNumber('')
+        setObservacion('')
         /*
         setTimeout(() => {
           router.push(`/dashboard/guias/${data.guia.id}`)
@@ -152,6 +155,23 @@ export default function ImportarOrdenShopify() {
               ))}
             </select>
           )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Observación (Opcional)
+          </label>
+          <textarea
+            value={observacion}
+            onChange={(e) => setObservacion(e.target.value)}
+            placeholder="Agrega una observación adicional para esta guía..."
+            rows={3}
+            className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+            disabled={importando}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Esta observación se guardará en la guía creada
+          </p>
         </div>
 
         {mensaje && (

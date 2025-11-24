@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 
 export async function POST(request: NextRequest) {
   try {
-    const { orderNumber, userId, motorizadoId } = await request.json()
+    const { orderNumber, userId, motorizadoId, observacion } = await request.json()
 
     if (!orderNumber) {
       return NextResponse.json({ error: 'Número de orden requerido' }, { status: 400 })
@@ -87,6 +87,19 @@ export async function POST(request: NextRequest) {
 
     const correo = getNoteAttribute(orden.note_attributes, 'Correo') || orden.customer?.email || ''
     
+    // Construir observación combinando la del usuario con info de Shopify
+    let observacionFinal = observacion?.trim() || ''
+    const infoShopify = []
+    if (orden.note) infoShopify.push(`Nota: ${orden.note}`)
+    if (correo) infoShopify.push(`Email: ${correo}`)
+    
+    if (infoShopify.length > 0) {
+      const infoText = `Pedido Shopify ${orden.name} - ${infoShopify.join(' | ')}`
+      observacionFinal = observacionFinal 
+        ? `${observacionFinal}\n${infoText}`
+        : infoText
+    }
+
     const { data: guia, error: guiaError } = await supabase
       .from('guias')
       .insert({
@@ -97,7 +110,7 @@ export async function POST(request: NextRequest) {
         monto_recaudar: parseFloat(orden.current_total_price),
         estado: 'asignada',
         motorizado_asignado: motorizado.id,
-        //observacion: `Pedido Shopify ${orden.name}${correo ? ` - Email: ${correo}` : ''}${orden.note ? ` - Nota: ${orden.note}` : ''}`,
+        observacion: observacionFinal || null,
         creado_por: userId,
         eliminado: false
       })

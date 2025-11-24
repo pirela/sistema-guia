@@ -10,6 +10,11 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession()
 
+  // Manejar la ruta raíz: siempre redirigir al login
+  if (req.nextUrl.pathname === '/') {
+    return NextResponse.redirect(new URL('/auth/login', req.url))
+  }
+
   // Solo proteger /dashboard si NO hay sesión
   // NO redirigir automáticamente de /auth/login a /dashboard
   // Dejar que el cliente (useAuth) valide completamente al usuario
@@ -23,5 +28,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/auth/login'],
+  matcher: ['/', '/dashboard/:path*', '/auth/login'],
 }

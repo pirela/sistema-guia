@@ -338,6 +338,7 @@ export default function GuiasPage() {
       asignada: 'bg-blue-100 text-blue-800',
       en_ruta: 'bg-yellow-100 text-yellow-800',
       entregada: 'bg-green-100 text-green-800',
+      finalizada: 'bg-indigo-100 text-indigo-800',
       cancelada: 'bg-red-100 text-red-800',
       rechazada: 'bg-orange-100 text-orange-800',
       novedad: 'bg-purple-100 text-purple-800',
@@ -537,9 +538,10 @@ export default function GuiasPage() {
                       { value: 'asignada', label: 'Asignada' },
                       { value: 'en_ruta', label: 'En Ruta' },
                       { value: 'entregada', label: 'Entregada' },
-                      { value: 'novedad', label: 'Novedad' },
-                      { value: 'cancelada', label: 'Cancelada' },
+                      { value: 'finalizada', label: 'Finalizada' },
                       { value: 'rechazada', label: 'Rechazada' },
+                      { value: 'cancelada', label: 'Cancelada' },
+                      { value: 'novedad', label: 'Novedad' },
                     ].map((estado) => (
                       <label
                         key={estado.value}
@@ -661,6 +663,18 @@ export default function GuiasPage() {
               )}
             </div>
           )}
+        </div>
+
+        {/* Contador de registros */}
+        <div className="flex items-center justify-between bg-white rounded-lg shadow p-4">
+          <div className="text-sm text-gray-600">
+            Total de guías: <span className="font-bold text-gray-900">{guiasFiltradas.length}</span>
+            {filtroEstado.length > 0 || filtroNombreCliente || filtroMotorizado || filtroFechaDesde || filtroFechaHasta !== hoy ? (
+              <span className="text-gray-500 ml-2">
+                (filtradas de {guias.length} total)
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">

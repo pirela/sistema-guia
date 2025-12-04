@@ -70,6 +70,16 @@ export default function ReportesPage() {
   const [ordenarPor, setOrdenarPor] = useState<string>('fecha_actualizacion')
   const [ordenDireccion, setOrdenDireccion] = useState<'asc' | 'desc'>('desc')
   
+  // Estados para eliminación de guías
+  const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false)
+  const [eliminando, setEliminando] = useState(false)
+  const [cantidadGuiasAEliminar, setCantidadGuiasAEliminar] = useState(0)
+  
+  // Estados para finalizar guías
+  const [mostrarModalFinalizar, setMostrarModalFinalizar] = useState(false)
+  const [finalizando, setFinalizando] = useState(false)
+  const [cantidadGuiasAFinalizar, setCantidadGuiasAFinalizar] = useState(0)
+  
   const ESTADOS_DISPONIBLES: EstadoGuia[] = ['pendiente', 'asignada', 'en_ruta', 'entregada', 'finalizada', 'cancelada', 'rechazada', 'novedad']
 
   // Función para ordenar las guías del reporte
@@ -273,15 +283,75 @@ export default function ReportesPage() {
   }, [mostrarFiltroEstados])
 
   // Función para buscar guías con filtros
-  const buscarGuiasReporte = async () => {
-    // Resetear estado de carga
-    setLoadingReporte(true)
-    
+  // Función auxiliar para construir la query base con filtros
+  const construirQueryConFiltros = () => {
+    let queryBuilder = supabase
+      .from('guias')
+      .select('*')
+      .eq('eliminado', false)
+
+    // Aplicar filtro por estados (multiselect)
+    if (filtroEstados.length > 0) {
+      queryBuilder = queryBuilder.in('estado', filtroEstados)
+    }
+
+    // Aplicar filtro por fecha desde (inclusivo - desde 00:00:00)
+    if (filtroFechaDesde) {
+      const fechaDesdeInicio = new Date(filtroFechaDesde)
+      fechaDesdeInicio.setHours(0, 0, 0, 0)
+      queryBuilder = queryBuilder.gte('fecha_actualizacion', fechaDesdeInicio.toISOString())
+    }
+
+    // Aplicar filtro por fecha hasta (inclusivo - hasta 23:59:59)
+    if (filtroFechaHasta) {
+      const fechaHastaFin = new Date(filtroFechaHasta)
+      fechaHastaFin.setHours(23, 59, 59, 999)
+      queryBuilder = queryBuilder.lte('fecha_actualizacion', fechaHastaFin.toISOString())
+    }
+
+    // Aplicar filtro por motorizado
+    if (filtroMotorizado) {
+      queryBuilder = queryBuilder.eq('motorizado_asignado', filtroMotorizado)
+    }
+
+    return queryBuilder
+  }
+
+  // Función para contar guías que se eliminarán
+  const contarGuiasAEliminar = async () => {
     try {
-      // Construir la query base
+      const queryBuilder = construirQueryConFiltros()
+      const { data, error } = await queryBuilder
+
+      if (error) throw error
+      return data?.length || 0
+    } catch (error) {
+      console.error('Error contando guías a eliminar:', error)
+      return 0
+    }
+  }
+
+  // Función para eliminar guías según los filtros
+  const eliminarGuiasPorFiltros = async () => {
+    if (!filtroEstados.length) {
+      alert('Debes seleccionar al menos un estado para eliminar guías')
+      return
+    }
+
+    if (!filtroMotorizado) {
+      alert('Debes seleccionar un motorizado para eliminar guías')
+      return
+    }
+
+    setEliminando(true)
+    try {
+      // Guardar la cantidad antes de eliminar
+      const cantidadEliminadas = cantidadGuiasAEliminar
+
+      // Construir la query de actualización con los mismos filtros
       let queryBuilder = supabase
         .from('guias')
-        .select('*')
+        .update({ eliminado: true })
         .eq('eliminado', false)
 
       // Aplicar filtro por estados (multiselect)
@@ -289,14 +359,14 @@ export default function ReportesPage() {
         queryBuilder = queryBuilder.in('estado', filtroEstados)
       }
 
-      // Aplicar filtro por fecha desde (inclusivo - desde 00:00:00)
+      // Aplicar filtro por fecha desde
       if (filtroFechaDesde) {
         const fechaDesdeInicio = new Date(filtroFechaDesde)
         fechaDesdeInicio.setHours(0, 0, 0, 0)
         queryBuilder = queryBuilder.gte('fecha_actualizacion', fechaDesdeInicio.toISOString())
       }
 
-      // Aplicar filtro por fecha hasta (inclusivo - hasta 23:59:59)
+      // Aplicar filtro por fecha hasta
       if (filtroFechaHasta) {
         const fechaHastaFin = new Date(filtroFechaHasta)
         fechaHastaFin.setHours(23, 59, 59, 999)
@@ -308,11 +378,167 @@ export default function ReportesPage() {
         queryBuilder = queryBuilder.eq('motorizado_asignado', filtroMotorizado)
       }
 
+      const { error } = await queryBuilder
+
+      if (error) throw error
+      
+      // Limpiar cache y refrescar datos
+      clearCache('reportes-estadisticas')
+      clearCache('reportes-estados')
+      clearCache('reportes-productos')
+      setGuiasReporte([])
+      await fetchReportes()
+      
+      setMostrarModalEliminar(false)
+      alert(`Se eliminaron ${cantidadEliminadas} guía(s) correctamente`)
+    } catch (error) {
+      console.error('Error eliminando guías:', error)
+      alert('Error al eliminar las guías')
+    } finally {
+      setEliminando(false)
+    }
+  }
+
+  // Función para abrir modal de confirmación
+  const abrirModalEliminar = async () => {
+    if (!filtroEstados.length) {
+      alert('Debes seleccionar al menos un estado para eliminar guías')
+      return
+    }
+
+    if (!filtroMotorizado) {
+      alert('Debes seleccionar un motorizado para eliminar guías')
+      return
+    }
+
+    const cantidad = await contarGuiasAEliminar()
+    if (cantidad === 0) {
+      alert('No hay guías que coincidan con los filtros seleccionados')
+      return
+    }
+
+    setCantidadGuiasAEliminar(cantidad)
+    setMostrarModalEliminar(true)
+  }
+
+  // Función para finalizar guías según los filtros
+  const finalizarGuiasPorFiltros = async () => {
+    if (!filtroEstados.length) {
+      alert('Debes seleccionar al menos un estado para finalizar guías')
+      return
+    }
+
+    if (!filtroMotorizado) {
+      alert('Debes seleccionar un motorizado para finalizar guías')
+      return
+    }
+
+    if (!user) {
+      alert('No se pudo identificar al usuario')
+      return
+    }
+
+    setFinalizando(true)
+    try {
+      // Guardar la cantidad antes de finalizar
+      const cantidadFinalizadas = cantidadGuiasAFinalizar
+
+      // Primero obtener las guías que se van a actualizar para registrar el historial
+      const queryBuilder = construirQueryConFiltros()
+      const { data: guiasAActualizar, error: errorSelect } = await queryBuilder
+
+      if (errorSelect) throw errorSelect
+
+      if (!guiasAActualizar || guiasAActualizar.length === 0) {
+        alert('No hay guías que coincidan con los filtros seleccionados')
+        return
+      }
+
+      const fechaEntrega = new Date().toISOString()
+
+      // Actualizar cada guía y registrar en historial
+      for (const guia of guiasAActualizar) {
+        // Actualizar estado de la guía
+        const { error: updateError } = await supabase
+          .from('guias')
+          .update({ 
+            estado: 'finalizada',
+            fecha_entrega: fechaEntrega
+          })
+          .eq('id', guia.id)
+
+        if (updateError) {
+          console.error(`Error actualizando guía ${guia.id}:`, updateError)
+          continue
+        }
+
+        // Insertar en historial_estado
+        const { error: historialError } = await supabase
+          .from('historial_estado')
+          .insert({
+            guia_id: guia.id,
+            estado_anterior: guia.estado,
+            estado_nuevo: 'finalizada',
+            usuario_id: user.id
+          })
+
+        if (historialError) {
+          console.warn(`Error insertando historial para guía ${guia.id} (puede ser que el trigger ya lo hizo):`, historialError)
+        }
+      }
+      
+      // Limpiar cache y refrescar datos
+      clearCache('reportes-estadisticas')
+      clearCache('reportes-estados')
+      clearCache('reportes-productos')
+      setGuiasReporte([])
+      await fetchReportes()
+      
+      setMostrarModalFinalizar(false)
+      alert(`Se finalizaron ${cantidadFinalizadas} guía(s) correctamente`)
+    } catch (error) {
+      console.error('Error finalizando guías:', error)
+      alert('Error al finalizar las guías')
+    } finally {
+      setFinalizando(false)
+    }
+  }
+
+  // Función para abrir modal de confirmación de finalizar
+  const abrirModalFinalizar = async () => {
+    if (!filtroEstados.length) {
+      alert('Debes seleccionar al menos un estado para finalizar guías')
+      return
+    }
+
+    if (!filtroMotorizado) {
+      alert('Debes seleccionar un motorizado para finalizar guías')
+      return
+    }
+
+    const cantidad = await contarGuiasAEliminar() // Reutilizamos la misma función de conteo
+    if (cantidad === 0) {
+      alert('No hay guías que coincidan con los filtros seleccionados')
+      return
+    }
+
+    setCantidadGuiasAFinalizar(cantidad)
+    setMostrarModalFinalizar(true)
+  }
+
+  const buscarGuiasReporte = async () => {
+    // Resetear estado de carga
+    setLoadingReporte(true)
+    
+    try {
+      // Construir la query base
+      const queryBuilder = construirQueryConFiltros()
+      
       // Aplicar ordenamiento
-      queryBuilder = queryBuilder.order('fecha_actualizacion', { ascending: false })
+      const queryConOrden = queryBuilder.order('fecha_actualizacion', { ascending: false })
 
       // Ejecutar la query
-      const { data, error } = await queryBuilder
+      const { data, error } = await queryConOrden
 
       if (error) {
         console.error('Error en la query de Supabase:', error)
@@ -813,6 +1039,36 @@ export default function ReportesPage() {
                   Limpiar todos
                 </button>
               )}
+
+              {/* Botón Finalizar Guías */}
+              {filtroEstados.length > 0 && filtroMotorizado && (
+                <button
+                  onClick={abrirModalFinalizar}
+                  disabled={finalizando}
+                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+                  title="Finalizar guías según los filtros seleccionados"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Finalizar Guías
+                </button>
+              )}
+
+              {/* Botón Eliminar Guías */}
+              {filtroEstados.length > 0 && filtroMotorizado && (
+                <button
+                  onClick={abrirModalEliminar}
+                  disabled={eliminando}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+                  title="Eliminar guías según los filtros seleccionados"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Eliminar Guías
+                </button>
+              )}
             </div>
 
             {/* Info de filtros activos */}
@@ -983,6 +1239,166 @@ export default function ReportesPage() {
           )}
         </div>
       </div>
+
+      {/* Modal de Confirmación para Eliminar Guías */}
+      {mostrarModalEliminar && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="shrink-0 w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Confirmar Eliminación</h3>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-sm text-gray-600 mb-4">
+                ¿Estás seguro de que deseas eliminar <span className="font-bold text-red-600">{cantidadGuiasAEliminar}</span> guía(s)?
+              </p>
+              
+              <div className="bg-gray-50 rounded-md p-3 space-y-2 text-xs text-gray-600">
+                <p>
+                  <span className="font-semibold">Estados:</span>{' '}
+                  {filtroEstados.map(e => getEstadoTexto(e)).join(', ')}
+                </p>
+                {filtroMotorizado && (
+                  <p>
+                    <span className="font-semibold">Motorizado:</span>{' '}
+                    {motorizados.find(m => m.id === filtroMotorizado)?.nombre || 'N/A'}
+                  </p>
+                )}
+                {filtroFechaDesde && (
+                  <p>
+                    <span className="font-semibold">Desde:</span>{' '}
+                    {new Date(filtroFechaDesde).toLocaleDateString('es-ES')}
+                  </p>
+                )}
+                {filtroFechaHasta && (
+                  <p>
+                    <span className="font-semibold">Hasta:</span>{' '}
+                    {new Date(filtroFechaHasta).toLocaleDateString('es-ES')}
+                  </p>
+                )}
+              </div>
+              
+              <p className="text-xs text-red-600 mt-3 font-semibold">
+                ⚠️ Esta acción no se puede deshacer
+              </p>
+            </div>
+            
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setMostrarModalEliminar(false)}
+                disabled={eliminando}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={eliminarGuiasPorFiltros}
+                disabled={eliminando}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {eliminando ? (
+                  <>
+                    <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Eliminando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Eliminar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmación para Finalizar Guías */}
+      {mostrarModalFinalizar && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="shrink-0 w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Confirmar Finalización</h3>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-sm text-gray-600 mb-4">
+                ¿Estás seguro de que deseas finalizar <span className="font-bold text-green-600">{cantidadGuiasAFinalizar}</span> guía(s)?
+              </p>
+              
+              <div className="bg-gray-50 rounded-md p-3 space-y-2 text-xs text-gray-600">
+                <p>
+                  <span className="font-semibold">Estados:</span>{' '}
+                  {filtroEstados.map(e => getEstadoTexto(e)).join(', ')}
+                </p>
+                {filtroMotorizado && (
+                  <p>
+                    <span className="font-semibold">Motorizado:</span>{' '}
+                    {motorizados.find(m => m.id === filtroMotorizado)?.nombre || 'N/A'}
+                  </p>
+                )}
+                {filtroFechaDesde && (
+                  <p>
+                    <span className="font-semibold">Desde:</span>{' '}
+                    {new Date(filtroFechaDesde).toLocaleDateString('es-ES')}
+                  </p>
+                )}
+                {filtroFechaHasta && (
+                  <p>
+                    <span className="font-semibold">Hasta:</span>{' '}
+                    {new Date(filtroFechaHasta).toLocaleDateString('es-ES')}
+                  </p>
+                )}
+              </div>
+              
+              <p className="text-xs text-green-600 mt-3 font-semibold">
+                ✓ Todas las guías seleccionadas cambiarán a estado "Finalizada"
+              </p>
+            </div>
+            
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setMostrarModalFinalizar(false)}
+                disabled={finalizando}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={finalizarGuiasPorFiltros}
+                disabled={finalizando}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {finalizando ? (
+                  <>
+                    <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Finalizando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Finalizar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }

@@ -106,6 +106,9 @@ export default function MisGuiasPage() {
       // Aplicar filtro de estado si no es 'todas'
       if (filtroEstado !== 'todas') {
         query = query.eq('estado', filtroEstado)
+      } else {
+        // Cuando es 'todas', excluir el estado 'finalizada' que los motorizados no deben ver
+        query = query.neq('estado', 'finalizada')
       }
 
       // Aplicar filtro de fecha desde
@@ -521,25 +524,29 @@ export default function MisGuiasPage() {
   }
 
   // Obtener contadores totales (sin paginación)
-  const fetchContadores = async (): Promise<{ todas: number; asignada: number; en_ruta: number; entregada: number; novedad: number }> => {
-    if (!user?.id) return { todas: 0, asignada: 0, en_ruta: 0, entregada: 0, novedad: 0 }
+  const fetchContadores = async (): Promise<{ todas: number; pendiente: number; asignada: number; en_ruta: number; entregada: number; rechazada: number; cancelada: number; novedad: number }> => {
+    if (!user?.id) return { todas: 0, pendiente: 0, asignada: 0, en_ruta: 0, entregada: 0, rechazada: 0, cancelada: 0, novedad: 0 }
 
     try {
-      const estados = ['asignada', 'en_ruta', 'entregada', 'novedad'] as const
-      const contadores: { todas: number; asignada: number; en_ruta: number; entregada: number; novedad: number } = { 
+      const estados = ['pendiente', 'asignada', 'en_ruta', 'entregada', 'rechazada', 'cancelada', 'novedad'] as const
+      const contadores: { todas: number; pendiente: number; asignada: number; en_ruta: number; entregada: number; rechazada: number; cancelada: number; novedad: number } = { 
         todas: 0, 
+        pendiente: 0,
         asignada: 0, 
         en_ruta: 0, 
         entregada: 0, 
+        rechazada: 0,
+        cancelada: 0,
         novedad: 0 
       }
 
-      // Contar todas
+      // Contar todas (excluyendo 'finalizada' que los motorizados no deben ver)
       const { count: total } = await supabase
         .from('guias')
         .select('*', { count: 'exact', head: true })
         .eq('motorizado_asignado', user.id)
         .eq('eliminado', false)
+        .neq('estado', 'finalizada')
 
       contadores.todas = total || 0
 
@@ -558,15 +565,18 @@ export default function MisGuiasPage() {
       return contadores
     } catch (error) {
       console.error('Error fetching contadores:', error)
-      return { todas: 0, asignada: 0, en_ruta: 0, entregada: 0, novedad: 0 }
+      return { todas: 0, pendiente: 0, asignada: 0, en_ruta: 0, entregada: 0, rechazada: 0, cancelada: 0, novedad: 0 }
     }
   }
 
   const [contadores, setContadores] = useState({
     todas: 0,
+    pendiente: 0,
     asignada: 0,
     en_ruta: 0,
     entregada: 0,
+    rechazada: 0,
+    cancelada: 0,
     novedad: 0,
   })
 
@@ -587,6 +597,9 @@ export default function MisGuiasPage() {
       // Aplicar filtro de estado si no es 'todas'
       if (filtroEstado !== 'todas') {
         query = query.eq('estado', filtroEstado)
+      } else {
+        // Cuando es 'todas', excluir el estado 'finalizada' que los motorizados no deben ver
+        query = query.neq('estado', 'finalizada')
       }
 
       // Aplicar filtro de fecha desde
@@ -688,6 +701,16 @@ export default function MisGuiasPage() {
                   Todas ({contadores.todas})
                 </button>
                 <button
+                  onClick={() => setFiltroEstado('pendiente')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'pendiente' 
+                      ? 'bg-gray-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Pendientes ({contadores.pendiente})
+                </button>
+                <button
                   onClick={() => setFiltroEstado('asignada')}
                   className={`px-2 py-1 text-xs rounded transition-all ${
                     filtroEstado === 'asignada' 
@@ -716,6 +739,26 @@ export default function MisGuiasPage() {
                   }`}
                 >
                   Entregadas ({contadores.entregada})
+                </button>
+                <button
+                  onClick={() => setFiltroEstado('rechazada')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'rechazada' 
+                      ? 'bg-orange-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Rechazadas ({contadores.rechazada})
+                </button>
+                <button
+                  onClick={() => setFiltroEstado('cancelada')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filtroEstado === 'cancelada' 
+                      ? 'bg-red-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Canceladas ({contadores.cancelada})
                 </button>
                 <button
                   onClick={() => setFiltroEstado('novedad')}

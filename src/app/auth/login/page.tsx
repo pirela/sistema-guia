@@ -14,20 +14,61 @@ export default function LoginPage() {
 
   // Verificar si ya hay una sesión activa (sin usar useAuth para evitar bucles)
   useEffect(() => {
+    let mounted = true
+    let timeoutId: NodeJS.Timeout | null = null
+
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
+        // Timeout de seguridad: máximo 3 segundos
+        timeoutId = setTimeout(() => {
+          if (mounted) {
+            console.warn('Timeout verificando sesión en login')
+            setCheckingSession(false)
+          }
+        }, 3000)
+
+        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
+
+        if (error) {
+          console.error('Error verificando sesión:', error)
+          if (mounted) {
+            setCheckingSession(false)
+          }
+          return
+        }
+
         if (session) {
-          router.push('/dashboard')
+          if (mounted) {
+            router.push('/dashboard')
+          }
         } else {
-          setCheckingSession(false)
+          if (mounted) {
+            setCheckingSession(false)
+          }
         }
       } catch (err) {
         console.error('Error verificando sesión:', err)
-        setCheckingSession(false)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
+        if (mounted) {
+          setCheckingSession(false)
+        }
       }
     }
+    
     checkSession()
+
+    return () => {
+      mounted = false
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }
   }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -63,8 +104,17 @@ export default function LoginPage() {
 
   if (checkingSession) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-lg">Cargando...</div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+        <div className="text-center">
+          <div className="text-lg mb-2">Verificando sesión...</div>
+          <div className="text-sm text-gray-500 mb-4">Si esto tarda mucho, puedes continuar</div>
+          <button
+            onClick={() => setCheckingSession(false)}
+            className="text-blue-600 hover:text-blue-800 underline text-sm"
+          >
+            Continuar al formulario de login
+          </button>
+        </div>
       </div>
     )
   }

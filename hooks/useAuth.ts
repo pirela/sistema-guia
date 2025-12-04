@@ -13,25 +13,40 @@ export function useAuth() {
 
   // Función para obtener datos del usuario (sin caché)
   const fetchUserData = async (userId: string, isMounted: () => boolean) => {
+    let fetchTimeoutId: NodeJS.Timeout | null = null
+    let timedOut = false
+
     try {
-      // Timeout de seguridad para fetchUserData
-      const fetchTimeoutId = setTimeout(() => {
-        if (isMounted()) {
-          console.warn('Timeout en fetchUserData')
-          // No establecer loading=false aquí si no hay usuario, mejor redirigir
-          const checkSession = async () => {
-            const { data: { session } } = await supabase.auth.getSession()
-            if (!session) {
+      // Timeout de seguridad para fetchUserData - más corto para evitar esperas largas
+      fetchTimeoutId = setTimeout(() => {
+        if (isMounted() && !timedOut) {
+          timedOut = true
+          console.warn('Timeout en fetchUserData después de 3 segundos')
+          // Verificar sesión antes de decidir qué hacer
+          supabase.auth.getSession().then(({ data: { session } }) => {
+            if (isMounted()) {
+              if (!session) {
+                setUser(null)
+                setLoading(false)
+                window.location.href = '/auth/login'
+              } else {
+                // Si hay sesión pero no pudimos obtener datos del usuario,
+                // establecer loading=false para que la UI pueda manejar el estado
+                setUser(null)
+                setLoading(false)
+                // Redirigir al login ya que no podemos obtener los datos del usuario
+                window.location.href = '/auth/login'
+              }
+            }
+          }).catch(() => {
+            if (isMounted()) {
               setUser(null)
               setLoading(false)
               window.location.href = '/auth/login'
-            } else {
-              setLoading(false)
             }
-          }
-          checkSession()
+          })
         }
-      }, 2500)
+      }, 3000)
 
       // Obtener datos del usuario directamente sin caché
       const { data, error } = await supabase
@@ -42,22 +57,42 @@ export function useAuth() {
         .eq('eliminado', false)
         .single()
 
-      clearTimeout(fetchTimeoutId)
+      // Si ya hubo timeout, no procesar la respuesta
+      if (timedOut) {
+        return
+      }
+
+      if (fetchTimeoutId) {
+        clearTimeout(fetchTimeoutId)
+      }
 
       if (error) {
         throw error
       }
 
-      if (isMounted()) {
+      if (isMounted() && !timedOut) {
         setUser(data)
         setLoading(false)
       }
     } catch (error: any) {
+      // Si ya hubo timeout, no hacer nada más
+      if (timedOut) {
+        return
+      }
+
+      if (fetchTimeoutId) {
+        clearTimeout(fetchTimeoutId)
+      }
+
       console.error('Error fetching user data:', error)
       
       if (isMounted()) {
         // Cerrar sesión y limpiar estados
-        await supabase.auth.signOut()
+        try {
+          await supabase.auth.signOut()
+        } catch (signOutError) {
+          console.error('Error al cerrar sesión:', signOutError)
+        }
         setUser(null)
         setLoading(false)
         
@@ -75,19 +110,26 @@ export function useAuth() {
 
     const checkUser = async () => {
       try {
-        // Timeout de seguridad: máximo 5 segundos para verificar sesión
-        timeoutId = setTimeout(async () => {
+        // Timeout de seguridad: máximo 4 segundos para verificar sesión
+        timeoutId = setTimeout(() => {
           if (mounted) {
-            console.warn('Timeout en checkUser')
-            // Verificar si hay sesión antes de establecer loading=false
-            const { data: { session } } = await supabase.auth.getSession()
-            if (!session) {
-              window.location.href = '/auth/login'
-            } else {
-              setLoading(false)
-            }
+            console.warn('Timeout en checkUser después de 4 segundos')
+            // Si hay timeout, establecer loading=false y redirigir al login
+            // para evitar que la página se quede cargando indefinidamente
+            setUser(null)
+            setLoading(false)
+            // Intentar verificar sesión una vez más antes de redirigir
+            supabase.auth.getSession().then(({ data: { session } }) => {
+              if (!session && mounted) {
+                window.location.href = '/auth/login'
+              }
+            }).catch(() => {
+              if (mounted) {
+                window.location.href = '/auth/login'
+              }
+            })
           }
-        }, 5000)
+        }, 4000)
 
         // Verificar sesión actual
         const { data: { session }, error: sessionError } = await supabase.auth.getSession()

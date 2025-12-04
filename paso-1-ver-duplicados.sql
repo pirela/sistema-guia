@@ -32,3 +32,5 @@ WHERE rn > 1
 GROUP BY nombre_normalizado
 ORDER BY cantidad_duplicados DESC;
 
+
+

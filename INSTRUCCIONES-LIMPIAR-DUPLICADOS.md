@@ -168,3 +168,5 @@ R: Si ejecutaste el Paso 3, las guías ahora apuntan al producto principal. Si n
 **P: ¿Esto afecta la importación de Shopify?**
 R: No, la importación seguirá funcionando. Ahora reutilizará los productos existentes gracias a la función que implementamos.
 
+
+

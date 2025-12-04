@@ -39,3 +39,5 @@ WHERE p.rn > 1 OR EXISTS (
 GROUP BY p.id, p.nombre, p.codigo_sku, p.nombre_normalizado, p.rn
 ORDER BY veces_usado_en_guias DESC, p.nombre;
 
+
+

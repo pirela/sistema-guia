@@ -13,6 +13,21 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const { user, loading, signOut } = useAuth()
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [forceShow, setForceShow] = useState(false)
+
+  // Timeout de seguridad: si loading tarda más de 5 segundos, mostrar contenido de todas formas
+  useEffect(() => {
+    if (loading) {
+      const timeoutId = setTimeout(() => {
+        console.warn('Timeout en DashboardLayout - forzando mostrar contenido')
+        setForceShow(true)
+      }, 5000)
+
+      return () => clearTimeout(timeoutId)
+    } else {
+      setForceShow(false)
+    }
+  }, [loading])
 
   useEffect(() => {
     if (!loading && !user) {
@@ -21,10 +36,23 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     }
   }, [user, loading])
 
-  if (loading) {
+  if (loading && !forceShow) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-xl">Cargando...</div>
+        <div className="text-center">
+          <div className="text-xl mb-2">Cargando...</div>
+          <div className="text-sm text-gray-500">Si esto tarda mucho, recarga la página</div>
+        </div>
+      </div>
+    )
+  }
+
+  // Si después del timeout no hay usuario, redirigir al login
+  if (forceShow && !user) {
+    window.location.href = '/auth/login'
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-xl">Redirigiendo...</div>
       </div>
     )
   }

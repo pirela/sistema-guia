@@ -89,3 +89,5 @@ JOIN productos_principales pp ON pp.nombre_normalizado = ps.nombre_normalizado
 WHERE gp.producto_id = ps.id_secundario;
 */
 
+
+

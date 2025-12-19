@@ -42,10 +42,22 @@ export default function GuiasPage() {
   const [ordenarPor, setOrdenarPor] = useState<string>('fecha_creacion')
   const [ordenDireccion, setOrdenDireccion] = useState<'asc' | 'desc'>('desc')
   
-  // Obtener fecha de hoy en formato YYYY-MM-DD para el input date + 7 días
-  const hoy = new Date(new Date().setDate(new Date().getDate() + 7)).toISOString().split('T')[0]
-  const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
-  const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>(hoy)
+  // Calcular fechas para filtro inicial (últimos 3 días)
+  const calcularFechasIniciales = () => {
+    const hoy = new Date()
+    const hace3Dias = new Date()
+    hace3Dias.setDate(hoy.getDate() - 3)
+    
+    return {
+      desde: hace3Dias.toISOString().split('T')[0],
+      hasta: hoy.toISOString().split('T')[0]
+    }
+  }
+
+  const fechasIniciales = calcularFechasIniciales()
+  const hoy = new Date().toISOString().split('T')[0] // Fecha de hoy para validaciones
+  const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>(fechasIniciales.desde)
+  const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>(fechasIniciales.hasta)
 
   // Debounce para el filtro de nombre del cliente
   useEffect(() => {
@@ -604,17 +616,18 @@ export default function GuiasPage() {
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            {(filtroFechaDesde || filtroFechaHasta !== hoy) && (
+            {(filtroFechaDesde !== fechasIniciales.desde || filtroFechaHasta !== fechasIniciales.hasta) && (
               <div className="flex items-end">
                 <button
                   type="button"
                   onClick={() => {
-                    setFiltroFechaDesde('')
-                    setFiltroFechaHasta(hoy)
+                    const nuevasFechas = calcularFechasIniciales()
+                    setFiltroFechaDesde(nuevasFechas.desde)
+                    setFiltroFechaHasta(nuevasFechas.hasta)
                   }}
                   className="px-4 py-2.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-300 rounded-md hover:bg-blue-50"
                 >
-                  Limpiar fechas
+                  Restablecer a últimos 3 días
                 </button>
               </div>
             )}
@@ -669,7 +682,7 @@ export default function GuiasPage() {
         <div className="flex items-center justify-between bg-white rounded-lg shadow p-4">
           <div className="text-sm text-gray-600">
             Total de guías: <span className="font-bold text-gray-900">{guiasFiltradas.length}</span>
-            {filtroEstado.length > 0 || filtroNombreCliente || filtroMotorizado || filtroFechaDesde || filtroFechaHasta !== hoy ? (
+            {filtroEstado.length > 0 || filtroNombreCliente || filtroMotorizado || filtroFechaDesde !== fechasIniciales.desde || filtroFechaHasta !== fechasIniciales.hasta ? (
               <span className="text-gray-500 ml-2">
                 (filtradas de {guias.length} total)
               </span>

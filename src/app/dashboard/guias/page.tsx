@@ -42,6 +42,10 @@ export default function GuiasPage() {
   const [ordenarPor, setOrdenarPor] = useState<string>('fecha_creacion')
   const [ordenDireccion, setOrdenDireccion] = useState<'asc' | 'desc'>('desc')
   
+  // Estados para selección de guías
+  const [guiasSeleccionadas, setGuiasSeleccionadas] = useState<Set<string>>(new Set())
+  const [generandoPDFSeleccionadas, setGenerandoPDFSeleccionadas] = useState(false)
+  
   // Calcular fechas para filtro inicial (últimos 3 días)
   const calcularFechasIniciales = () => {
     const hoy = new Date()
@@ -298,6 +302,20 @@ export default function GuiasPage() {
     }
   }, [loading, authLoading])
 
+  // Limpiar selecciones cuando cambian los filtros (solo mantener las que siguen siendo visibles)
+  useEffect(() => {
+    const guiasVisiblesIds = new Set(guiasFiltradas.map(g => g.id))
+    setGuiasSeleccionadas(prev => {
+      const nuevo = new Set<string>()
+      prev.forEach(id => {
+        if (guiasVisiblesIds.has(id)) {
+          nuevo.add(id)
+        }
+      })
+      return nuevo
+    })
+  }, [filtroEstado, filtroNombreClienteDebounced, filtroMotorizado, filtroFechaDesde, filtroFechaHasta])
+
 
   const fetchMotorizados = async () => {
     try {
@@ -414,6 +432,82 @@ export default function GuiasPage() {
       : guias.filter(g => filtroEstado.includes(g.estado))
   )
 
+  // Funciones para manejar selección
+  const toggleSeleccionarGuia = (guiaId: string) => {
+    setGuiasSeleccionadas(prev => {
+      const nuevo = new Set(prev)
+      if (nuevo.has(guiaId)) {
+        nuevo.delete(guiaId)
+      } else {
+        nuevo.add(guiaId)
+      }
+      return nuevo
+    })
+  }
+
+  const toggleSeleccionarTodas = () => {
+    if (guiasSeleccionadas.size === guiasFiltradas.length) {
+      // Deseleccionar todas
+      setGuiasSeleccionadas(new Set())
+    } else {
+      // Seleccionar todas las visibles
+      setGuiasSeleccionadas(new Set(guiasFiltradas.map(g => g.id)))
+    }
+  }
+
+  const todasSeleccionadas = guiasFiltradas.length > 0 && guiasSeleccionadas.size === guiasFiltradas.length
+  const algunasSeleccionadas = guiasSeleccionadas.size > 0 && guiasSeleccionadas.size < guiasFiltradas.length
+
+  // Función para generar PDF de las guías seleccionadas
+  const generarPDFSeleccionadas = async () => {
+    if (guiasSeleccionadas.size === 0) {
+      alert('No hay guías seleccionadas')
+      return
+    }
+
+    setGenerandoPDFSeleccionadas(true)
+    try {
+      // Obtener las guías seleccionadas con sus datos completos
+      const guiasSeleccionadasArray = guiasFiltradas.filter(g => guiasSeleccionadas.has(g.id))
+
+      const guiasCompletas = await Promise.all(
+        guiasSeleccionadasArray.map(async (guia) => {
+          // Obtener motorizado
+          const { data: motorizado } = await supabase
+            .from('usuarios')
+            .select('*')
+            .eq('id', guia.motorizado_asignado)
+            .single()
+
+          // Obtener productos
+          const { data: guiasProductos } = await supabase
+            .from('guias_productos')
+            .select(`
+              cantidad,
+              producto:productos(*)
+            `)
+            .eq('guia_id', guia.id)
+
+          return {
+            ...guia,
+            motorizado: motorizado || { nombre: 'N/A', email: 'N/A' },
+            productos: guiasProductos || []
+          }
+        })
+      )
+
+      // Importar la función de generación de PDF
+      const { generarPDFGuiasAsignadas } = await import('@/lib/pdf-generator')
+      await generarPDFGuiasAsignadas(guiasCompletas as any)
+      alert(`PDF generado exitosamente con ${guiasSeleccionadas.size} guía(s)`)
+    } catch (error) {
+      console.error('Error generando PDF:', error)
+      alert('Error al generar el PDF')
+    } finally {
+      setGenerandoPDFSeleccionadas(false)
+    }
+  }
+
   // Función para manejar el clic en el header de ordenamiento
   const handleOrdenar = (campo: string) => {
     if (ordenarPor === campo) {
@@ -476,6 +570,23 @@ export default function GuiasPage() {
           <h2 className="text-2xl sm:text-3xl font-bold text-gray-800">Guías de Despacho</h2>
           <div className="flex flex-col sm:flex-row gap-2">
             <GenerarPDFGuias />
+            {guiasSeleccionadas.size > 0 && (
+              <>
+                <button
+                  onClick={generarPDFSeleccionadas}
+                  disabled={generandoPDFSeleccionadas}
+                  className="bg-purple-600 text-white px-4 py-2.5 rounded-md hover:bg-purple-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-sm sm:text-base"
+                >
+                  {generandoPDFSeleccionadas ? 'Generando PDF...' : `📄 PDF Seleccionadas (${guiasSeleccionadas.size})`}
+                </button>
+                <button
+                  onClick={() => setGuiasSeleccionadas(new Set())}
+                  className="bg-gray-500 text-white px-4 py-2.5 rounded-md hover:bg-gray-600 transition-colors text-sm sm:text-base"
+                >
+                  Limpiar selección
+                </button>
+              </>
+            )}
             <Link
               href="/dashboard/guias/crear"
               className="bg-blue-600 text-white px-4 py-2.5 rounded-md hover:bg-blue-700 transition-colors text-center text-sm sm:text-base"
@@ -687,6 +798,11 @@ export default function GuiasPage() {
                 (filtradas de {guias.length} total)
               </span>
             ) : null}
+            {guiasSeleccionadas.size > 0 && (
+              <span className="text-purple-600 ml-3 font-semibold">
+                • {guiasSeleccionadas.size} seleccionada{guiasSeleccionadas.size !== 1 ? 's' : ''}
+              </span>
+            )}
           </div>
         </div>
 
@@ -694,6 +810,19 @@ export default function GuiasPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                  <input
+                    type="checkbox"
+                    checked={todasSeleccionadas}
+                    ref={(input) => {
+                      if (input) {
+                        input.indeterminate = algunasSeleccionadas
+                      }
+                    }}
+                    onChange={toggleSeleccionarTodas}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                </th>
                 <th 
                   className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                   onClick={() => handleOrdenar('numero_guia')}
@@ -765,13 +894,21 @@ export default function GuiasPage() {
             <tbody className="bg-white divide-y divide-gray-200">
               {guiasFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
                     No hay guías registradas
                   </td>
                 </tr>
               ) : (
                 guiasFiltradas.map((guia) => (
                   <tr key={guia.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={guiasSeleccionadas.has(guia.id)}
+                        onChange={() => toggleSeleccionarGuia(guia.id)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {guia.numero_guia}
                     </td>
@@ -832,13 +969,21 @@ export default function GuiasPage() {
             guiasFiltradas.map((guia) => (
               <div key={guia.id} className="bg-white rounded-lg shadow p-4 sm:p-6 space-y-3 sm:space-y-4">
                 <div className="flex items-stretch justify-between gap-3">
-                  <div className="flex flex-col">
-                    <h3 className="text-base sm:text-lg font-bold text-gray-800">
-                      {guia.numero_guia}
-                    </h3>
-                    <p className="text-xs sm:text-sm text-gray-500">
-                      {new Date(guia.fecha_creacion).toLocaleDateString()}
-                    </p>
+                  <div className="flex items-center gap-3 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={guiasSeleccionadas.has(guia.id)}
+                      onChange={() => toggleSeleccionarGuia(guia.id)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <div className="flex flex-col">
+                      <h3 className="text-base sm:text-lg font-bold text-gray-800">
+                        {guia.numero_guia}
+                      </h3>
+                      <p className="text-xs sm:text-sm text-gray-500">
+                        {new Date(guia.fecha_creacion).toLocaleDateString()}
+                      </p>
+                    </div>
                   </div>
                   <span className={`px-3 py-2 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)} whitespace-nowrap flex items-center justify-center`}>
                     {guia.estado}

@@ -168,3 +168,8 @@ export default function EstadisticasMotorizados({ estadisticasMotorizados }: Est
   )
 }
 
+
+
+
+
+

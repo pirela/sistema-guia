@@ -26,3 +26,8 @@ export const getEstadoTexto = (estado: string) => {
   return textos[estado] || estado
 }
 
+
+
+
+
+

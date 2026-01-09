@@ -50,7 +50,8 @@ export interface ShopifyOrder {
 export async function obtenerOrdenShopify(orderNumber: string): Promise<ShopifyOrder | null> {
   try {
     const cleanOrderNumber = orderNumber.replace('#', '').trim()
-    
+    console.info(`-------------> https://${SHOPIFY_CONFIG.shop}/admin/api/${SHOPIFY_CONFIG.apiVersion}/orders.json?name=%23${cleanOrderNumber}`)
+    console.info("SHOPIFY_CONFIG.accessToken", SHOPIFY_CONFIG.accessToken)
     const response = await fetch(
       `https://${SHOPIFY_CONFIG.shop}/admin/api/${SHOPIFY_CONFIG.apiVersion}/orders.json?name=%23${cleanOrderNumber}`,
       {
@@ -60,7 +61,7 @@ export async function obtenerOrdenShopify(orderNumber: string): Promise<ShopifyO
         }
       }
     )
-
+    console.log("response", response)
     if (!response.ok) {
       throw new Error(`Error: ${response.statusText}`)
     }

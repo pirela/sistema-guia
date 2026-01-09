@@ -722,7 +722,7 @@ export default function GuiasPage() {
                 type="date"
                 value={filtroFechaHasta}
                 onChange={(e) => setFiltroFechaHasta(e.target.value)}
-                max={hoy}
+                //max={hoy}
                 min={filtroFechaDesde || undefined}
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />

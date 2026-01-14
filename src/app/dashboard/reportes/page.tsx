@@ -49,6 +49,14 @@ interface ProductosDespachados {
 interface GuiaReporte extends Guia {
   // Hereda todos los campos de Guia, incluyendo:
   // numero_guia, monto_recaudar, fecha_actualizacion, estado
+  guias_productos?: Array<{
+    cantidad: number
+    producto: {
+      id: string
+      nombre: string
+      codigo_sku: string | null
+    }
+  }>
 }
 
 export default function ReportesPage() {
@@ -62,6 +70,8 @@ export default function ReportesPage() {
   // Estados para el reporte de guías con filtros
   const [guiasReporte, setGuiasReporte] = useState<GuiaReporte[]>([])
   const [loadingReporte, setLoadingReporte] = useState(false)
+  const [resumenProductos, setResumenProductos] = useState<Array<{ nombre: string, cantidad: number }>>([])
+
   const [filtroEstados, setFiltroEstados] = useState<EstadoGuia[]>([])
   const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('')
   const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>('')
@@ -504,6 +514,24 @@ export default function ReportesPage() {
     setMostrarModalFinalizar(true)
   }
 
+  // Función para calcular resumen de productos agrupados
+  const calcularResumenProductos = (guias: GuiaReporte[]) => {
+    const productosMap = new Map<string, number>()
+    
+    guias.forEach(guia => {
+      guia.guias_productos?.forEach(gp => {
+        const productoNombre = gp.producto.nombre
+        const cantidadActual = productosMap.get(productoNombre) || 0
+        productosMap.set(productoNombre, cantidadActual + gp.cantidad)
+      })
+    })
+    
+    // Convertir a array y ordenar por cantidad (mayor a menor)
+    return Array.from(productosMap.entries())
+      .map(([nombre, cantidad]) => ({ nombre, cantidad }))
+      .sort((a, b) => b.cantidad - a.cantidad)
+  }
+
   const buscarGuiasReporte = async () => {
     // Resetear estado de carga
     setLoadingReporte(true)
@@ -512,8 +540,20 @@ export default function ReportesPage() {
       // Construir la query base
       const queryBuilder = construirQueryConFiltros()
       
-      // Aplicar ordenamiento
-      const queryConOrden = queryBuilder.order('fecha_actualizacion', { ascending: false })
+      // Aplicar ordenamiento y traer productos relacionados
+      const queryConOrden = queryBuilder
+        .select(`
+          *,
+          guias_productos (
+            cantidad,
+            producto:productos (
+              id,
+              nombre,
+              codigo_sku
+            )
+          )
+        `)
+        .order('fecha_actualizacion', { ascending: false })
 
       // Ejecutar la query
       const { data, error } = await queryConOrden
@@ -525,10 +565,15 @@ export default function ReportesPage() {
 
       // Actualizar el estado con los datos
       setGuiasReporte(data || [])
+      
+      // Calcular y actualizar resumen de productos
+      const resumen = calcularResumenProductos(data || [])
+      setResumenProductos(resumen)
     } catch (error) {
       console.error('Error buscando guías para reporte:', error)
       // Resetear los resultados en caso de error
       setGuiasReporte([])
+      setResumenProductos([])
     } finally {
       // SIEMPRE resetear el estado de carga, incluso si hay error
       setLoadingReporte(false)
@@ -949,6 +994,54 @@ export default function ReportesPage() {
                   ))
                 )}
               </div>
+
+              {/* Card de Resumen de Productos */}
+              {guiasReporte.length > 0 && resumenProductos.length > 0 && (
+                <div className="mt-6 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4 sm:p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="flex-shrink-0 w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                      </svg>
+                    </div>
+                    <h4 className="text-base sm:text-lg font-bold text-gray-800">
+                      📦 Resumen de Productos
+                    </h4>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {resumenProductos.map((producto, index) => (
+                      <div 
+                        key={index} 
+                        className="bg-white rounded-lg p-3 sm:p-4 border border-green-100 hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-700 truncate" title={producto.nombre}>
+                              {producto.nombre}
+                            </p>
+                          </div>
+                          <div className="flex-shrink-0">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800">
+                              x {producto.cantidad}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="mt-4 pt-3 border-t border-green-200">
+                    <p className="text-xs text-gray-600 text-center sm:text-left">
+                      Total de productos únicos: <span className="font-semibold text-gray-800">{resumenProductos.length}</span>
+                      {' • '}
+                      Cantidad total: <span className="font-semibold text-gray-800">
+                        {resumenProductos.reduce((sum, p) => sum + p.cantidad, 0)}
+                      </span> unidades
+                    </p>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

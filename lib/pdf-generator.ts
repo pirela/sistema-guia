@@ -198,7 +198,7 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.text('Tel:', margin + 2, yPosition)
     doc.setFont('arial', 'bold')
     doc.setTextColor(0, 0, 0)
-    doc.text(guia.telefono_cliente, margin + 5, yPosition)
+    doc.text(guia.telefono_cliente, margin + 8, yPosition)
     
     yPosition += 3
 

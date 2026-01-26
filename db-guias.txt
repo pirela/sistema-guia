@@ -1,0 +1,136 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.configuracion_sistema (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  clave character varying NOT NULL UNIQUE,
+  valor text NOT NULL,
+  descripcion text,
+  tipo_dato character varying NOT NULL DEFAULT 'text'::character varying,
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  fecha_actualizacion timestamp with time zone NOT NULL DEFAULT now(),
+  actualizado_por uuid,
+  CONSTRAINT configuracion_sistema_pkey PRIMARY KEY (id),
+  CONSTRAINT configuracion_sistema_actualizado_por_fkey FOREIGN KEY (actualizado_por) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.guias (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  numero_guia character varying NOT NULL UNIQUE,
+  nombre_cliente character varying NOT NULL,
+  telefono_cliente character varying NOT NULL,
+  direccion text NOT NULL,
+  observacion text,
+  estado USER-DEFINED NOT NULL DEFAULT 'asignada'::estado_guia,
+  motorizado_asignado uuid NOT NULL,
+  fecha_asignacion timestamp with time zone NOT NULL DEFAULT now(),
+  fecha_entrega timestamp with time zone,
+  monto_recaudar numeric NOT NULL DEFAULT 0,
+  eliminado boolean NOT NULL DEFAULT false,
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  fecha_actualizacion timestamp with time zone NOT NULL DEFAULT now(),
+  creado_por uuid NOT NULL,
+  actualizado_por uuid,
+  monto_pago_motorizado numeric DEFAULT 0,
+  fecha_finalizacion timestamp with time zone,
+  finalizado_por uuid,
+  observacion_finalizacion text,
+  liquidacion_id uuid,
+  CONSTRAINT guias_pkey PRIMARY KEY (id),
+  CONSTRAINT guias_motorizado_asignado_fkey FOREIGN KEY (motorizado_asignado) REFERENCES public.usuarios(id),
+  CONSTRAINT guias_creado_por_fkey FOREIGN KEY (creado_por) REFERENCES public.usuarios(id),
+  CONSTRAINT guias_actualizado_por_fkey FOREIGN KEY (actualizado_por) REFERENCES public.usuarios(id),
+  CONSTRAINT guias_finalizado_por_fkey FOREIGN KEY (finalizado_por) REFERENCES public.usuarios(id),
+  CONSTRAINT guias_liquidacion_id_fkey FOREIGN KEY (liquidacion_id) REFERENCES public.liquidaciones(id)
+);
+CREATE TABLE public.guias_productos (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  guia_id uuid NOT NULL,
+  producto_id uuid NOT NULL,
+  cantidad integer NOT NULL DEFAULT 1 CHECK (cantidad > 0),
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT guias_productos_pkey PRIMARY KEY (id),
+  CONSTRAINT guias_productos_guia_id_fkey FOREIGN KEY (guia_id) REFERENCES public.guias(id),
+  CONSTRAINT guias_productos_producto_id_fkey FOREIGN KEY (producto_id) REFERENCES public.productos(id)
+);
+CREATE TABLE public.historial_estado (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  guia_id uuid NOT NULL,
+  estado_anterior USER-DEFINED,
+  estado_nuevo USER-DEFINED NOT NULL,
+  usuario_id uuid,
+  comentario text,
+  fecha_cambio timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT historial_estado_pkey PRIMARY KEY (id),
+  CONSTRAINT historial_estado_guia_id_fkey FOREIGN KEY (guia_id) REFERENCES public.guias(id),
+  CONSTRAINT historial_estado_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.liquidaciones (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  numero_liquidacion character varying NOT NULL UNIQUE,
+  motorizado_id uuid NOT NULL,
+  fecha_liquidacion timestamp with time zone NOT NULL DEFAULT now(),
+  fecha_inicio date NOT NULL,
+  fecha_fin date NOT NULL,
+  cantidad_guias integer NOT NULL,
+  monto_por_guia numeric NOT NULL,
+  monto_total numeric NOT NULL,
+  observaciones text,
+  creado_por uuid NOT NULL,
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT liquidaciones_pkey PRIMARY KEY (id),
+  CONSTRAINT liquidaciones_motorizado_id_fkey FOREIGN KEY (motorizado_id) REFERENCES public.usuarios(id),
+  CONSTRAINT liquidaciones_creado_por_fkey FOREIGN KEY (creado_por) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.liquidaciones_detalle (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  liquidacion_id uuid NOT NULL,
+  guia_id uuid NOT NULL,
+  monto_pagado numeric NOT NULL,
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT liquidaciones_detalle_pkey PRIMARY KEY (id),
+  CONSTRAINT liquidaciones_detalle_liquidacion_id_fkey FOREIGN KEY (liquidacion_id) REFERENCES public.liquidaciones(id),
+  CONSTRAINT liquidaciones_detalle_guia_id_fkey FOREIGN KEY (guia_id) REFERENCES public.guias(id)
+);
+CREATE TABLE public.novedades (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  guia_id uuid NOT NULL,
+  usuario_id uuid NOT NULL,
+  comentario text NOT NULL,
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT novedades_pkey PRIMARY KEY (id),
+  CONSTRAINT novedades_guia_id_fkey FOREIGN KEY (guia_id) REFERENCES public.guias(id),
+  CONSTRAINT novedades_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.productos (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  codigo_sku character varying UNIQUE,
+  nombre character varying NOT NULL,
+  descripcion text,
+  precio numeric NOT NULL DEFAULT 0,
+  activo boolean NOT NULL DEFAULT true,
+  eliminado boolean NOT NULL DEFAULT false,
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  fecha_actualizacion timestamp with time zone NOT NULL DEFAULT now(),
+  creado_por uuid,
+  actualizado_por uuid,
+  CONSTRAINT productos_pkey PRIMARY KEY (id),
+  CONSTRAINT productos_creado_por_fkey FOREIGN KEY (creado_por) REFERENCES public.usuarios(id),
+  CONSTRAINT productos_actualizado_por_fkey FOREIGN KEY (actualizado_por) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.usuarios (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  username character varying NOT NULL UNIQUE,
+  email character varying NOT NULL UNIQUE,
+  password_hash text,
+  nombre character varying NOT NULL,
+  rol USER-DEFINED NOT NULL DEFAULT 'motorizado'::rol_usuario,
+  activo boolean NOT NULL DEFAULT true,
+  eliminado boolean NOT NULL DEFAULT false,
+  fecha_creacion timestamp with time zone NOT NULL DEFAULT now(),
+  fecha_actualizacion timestamp with time zone NOT NULL DEFAULT now(),
+  creado_por uuid,
+  actualizado_por uuid,
+  CONSTRAINT usuarios_pkey PRIMARY KEY (id),
+  CONSTRAINT usuarios_creado_por_fkey FOREIGN KEY (creado_por) REFERENCES public.usuarios(id),
+  CONSTRAINT usuarios_actualizado_por_fkey FOREIGN KEY (actualizado_por) REFERENCES public.usuarios(id)
+);

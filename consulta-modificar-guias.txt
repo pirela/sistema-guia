@@ -1,0 +1,43 @@
+-- ========================================
+-- SCRIPT DE CONSULTA - VERIFICACIÓN
+-- Ver cuántas guías se modificarán
+-- ========================================
+
+-- Contar total de guías que se modificarán
+SELECT 
+  COUNT(*) as total_guias_a_modificar,
+  estado,
+  COUNT(*) FILTER (WHERE estado = 'entregada') as total_entregadas,
+  COUNT(*) FILTER (WHERE estado = 'finalizada') as total_finalizadas
+FROM guias
+WHERE 
+  (estado = 'entregada' OR estado = 'finalizada')
+  AND fecha_creacion >= '2025-05-01 00:00:00'
+  AND fecha_creacion <= '2025-12-31 23:59:59'
+  AND eliminado = false
+GROUP BY GROUPING SETS ((estado), ());
+
+-- Ver listado detallado de guías que se modificarán
+SELECT 
+  id,
+  numero_guia as numero_actual,
+  CONCAT(numero_guia, 'OLD') as numero_nuevo,
+  estado,
+  fecha_creacion,
+  fecha_entrega,
+  nombre_cliente,
+  monto_recaudar
+FROM guias
+WHERE 
+  (estado = 'entregada' OR estado = 'finalizada')
+  AND fecha_creacion >= '2025-05-01 00:00:00'
+  AND fecha_creacion <= '2025-12-31 23:59:59'
+  AND eliminado = false
+ORDER BY fecha_creacion DESC;
+
+-- Verificar si algún número ya tiene "OLD" (por seguridad)
+SELECT 
+  COUNT(*) as guias_con_OLD_existentes
+FROM guias
+WHERE numero_guia LIKE '%OLD'
+  AND eliminado = false;

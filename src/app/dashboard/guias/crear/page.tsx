@@ -125,7 +125,7 @@ export default function CrearGuiaPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-
+    console.log(formData)
     try {
       if (!formData.motorizado_asignado) {
         alert('Debes seleccionar un motorizado')
@@ -136,7 +136,7 @@ export default function CrearGuiaPage() {
         alert('Debes agregar al menos un producto')
         return
       }
-
+      console.log("1")
       const { data: guiaData, error: guiaError } = await supabase
         .from('guias')
         .insert({
@@ -150,20 +150,27 @@ export default function CrearGuiaPage() {
           numero_guia: ''
         })
         .select()
-        .single()
+        .single();
 
-      if (guiaError) throw guiaError
+        console.log("guiaData", guiaData)
+        console.log("guiaError", guiaError)
+
+      if (guiaError) {
+        alert("Error al crear la guía: " + guiaError.message)
+        console.log("guiaError", guiaError)
+        throw guiaError
+      }
 
       const productosInsert = productosSeleccionados.map(p => ({
         guia_id: guiaData.id,
         producto_id: p.producto_id,
         cantidad: p.cantidad
       }))
-
+      console.log("productosInsert", productosInsert)
       const { error: productosError } = await supabase
         .from('guias_productos')
         .insert(productosInsert)
-
+      console.log(productosError)
       if (productosError) throw productosError
 
       clearCache('guias')

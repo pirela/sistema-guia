@@ -1,0 +1,16 @@
+BEGIN;
+
+UPDATE guias
+SET numero_guia = numero_guia || 'OLD'
+WHERE 
+  (estado = 'entregada' OR estado = 'finalizada')
+  AND fecha_creacion >= '2025-05-01 00:00:00'
+  AND fecha_creacion <= '2025-12-31 23:59:59'
+  AND eliminado = false
+  AND numero_guia NOT LIKE '%OLD';
+
+-- Verifica cuántas filas se actualizaron
+-- Deberías ver: UPDATE X
+
+-- Si es correcto:
+COMMIT;

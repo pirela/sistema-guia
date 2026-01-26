@@ -1,0 +1,15 @@
+ALTER TABLE guias ENABLE TRIGGER after_insert_guia_historial;
+
+ALTER TABLE guias ENABLE TRIGGER after_update_guia_estado;
+
+ALTER TABLE guias ENABLE TRIGGER before_insert_guia_numero;
+
+ALTER TABLE guias ENABLE TRIGGER before_insert_update_guia_motorizado;
+
+ALTER TABLE guias ENABLE TRIGGER before_update_guia_finalizada;
+
+ALTER TABLE guias ENABLE TRIGGER before_update_guia_motorizado;
+
+ALTER TABLE guias ENABLE TRIGGER before_update_guias;
+
+ALTER TABLE guias ENABLE TRIGGER trigger_validar_transicion_estado;

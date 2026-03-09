@@ -67,3 +67,25 @@ export interface Novedad {
   comentario: string
   fecha_creacion: string
 }
+
+// Inventario por motorizado (sin caché; consultas siempre a BD)
+export type TipoMovimientoInventario = 'entrada' | 'salida_entrega' | 'salida_manual'
+
+export interface InventarioMotorizado {
+  motorizado_id: string
+  producto_id: string
+  cantidad: number
+  fecha_actualizacion: string
+}
+
+export interface MovimientoInventario {
+  id: string
+  motorizado_id: string
+  producto_id: string
+  tipo: TipoMovimientoInventario
+  cantidad: number
+  guia_id: string | null
+  comentario: string | null
+  usuario_id: string
+  fecha: string
+}

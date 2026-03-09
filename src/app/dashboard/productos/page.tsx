@@ -112,11 +112,37 @@ export default function ProductosPage() {
         if (error) throw error
         alert('Producto actualizado exitosamente')
       } else {
+        const nombreTrim = formData.nombre.trim()
+        const skuTrim = formData.codigo_sku?.trim() || null
+
+        const { data: existentes } = await supabase
+          .from('productos')
+          .select('id, nombre, codigo_sku')
+          .eq('eliminado', false)
+
+        const nombreNormalizado = nombreTrim.toLowerCase().replace(/\s+/g, ' ')
+        const yaExisteNombre = existentes?.some(
+          (p) => p.nombre?.toLowerCase().replace(/\s+/g, ' ') === nombreNormalizado
+        )
+        if (yaExisteNombre) {
+          alert('Ya existe un producto activo con ese nombre. Usa otro nombre o edita el existente.')
+          return
+        }
+        if (skuTrim) {
+          const yaExisteSku = existentes?.some(
+            (p) => p.codigo_sku?.trim().toLowerCase() === skuTrim.toLowerCase()
+          )
+          if (yaExisteSku) {
+            alert('Ya existe un producto activo con ese código SKU. Usa otro SKU o edita el existente.')
+            return
+          }
+        }
+
         const { error } = await supabase
           .from('productos')
           .insert({
-            codigo_sku: formData.codigo_sku || null,
-            nombre: formData.nombre,
+            codigo_sku: skuTrim || null,
+            nombre: nombreTrim,
             descripcion: formData.descripcion || null,
             precio: parseFloat(formData.precio),
             creado_por: user?.id,

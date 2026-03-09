@@ -20,6 +20,7 @@ export default function Sidebar({ user, isOpen, onClose }: SidebarProps) {
     { href: '/dashboard/guias', label: 'Guías', icon: '📋' },
     { href: '/dashboard/guias/crear', label: 'Crear Guía', icon: '➕' },
     { href: '/dashboard/productos', label: 'Productos', icon: '📦' },
+    { href: '/dashboard/inventario', label: 'Inventario', icon: '🧾' },
     { href: '/dashboard/usuarios', label: 'Usuarios', icon: '👥' },
     { href: '/dashboard/reportes', label: 'Reportes', icon: '📊' },
   ]

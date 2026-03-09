@@ -261,13 +261,46 @@ export default function DetalleGuiaPage() {
     comentario: string
   ) => {
     if (!guia || !user || !id) return
-    
+
+    if (nuevoEstado === 'entregada') {
+      const { data: lineas } = await supabase
+        .from('guias_productos')
+        .select('producto_id, cantidad, producto:productos(id, nombre)')
+        .eq('guia_id', guia.id)
+      const lineasGuia = lineas ?? []
+
+      const { data: inventarioRows } = await supabase
+        .from('inventario_motorizado')
+        .select('producto_id, cantidad')
+        .eq('motorizado_id', guia.motorizado_asignado)
+      const stockMap: Record<string, number> = {}
+      for (const row of inventarioRows ?? []) {
+        stockMap[row.producto_id] = row.cantidad
+      }
+
+      const faltantes: string[] = []
+      for (const linea of lineasGuia) {
+        const necesito = linea.cantidad
+        const tiene = stockMap[linea.producto_id] ?? 0
+        if (tiene < necesito) {
+          const nombre = (linea.producto as { nombre?: string })?.nombre ?? linea.producto_id
+          faltantes.push(`${nombre} (necesita ${necesito}, tiene ${tiene})`)
+        }
+      }
+      if (faltantes.length > 0) {
+        alert(
+          'No se puede marcar como entregada: el motorizado no tiene stock suficiente.\n\n' +
+            faltantes.join('\n')
+        )
+        return
+      }
+    }
+
     setActualizando(true)
     try {
-      // Actualizar estado de la guía
       const { error } = await supabase
         .from('guias')
-        .update({ 
+        .update({
           estado: nuevoEstado,
           fecha_entrega: nuevoEstado === 'entregada' ? new Date().toISOString() : guia.fecha_entrega
         })
@@ -275,7 +308,6 @@ export default function DetalleGuiaPage() {
 
       if (error) throw error
 
-      // Insertar en historial_estado (el trigger debería hacerlo, pero lo hacemos manualmente por si acaso)
       const { error: historialError } = await supabase
         .from('historial_estado')
         .insert({
@@ -289,7 +321,6 @@ export default function DetalleGuiaPage() {
         console.warn('Error insertando en historial_estado (puede ser que el trigger ya lo hizo):', historialError)
       }
 
-      // Si hay comentario, guardar en tabla novedades
       if (comentario.trim()) {
         const { error: errorNovedad } = await supabase
           .from('novedades')
@@ -299,10 +330,49 @@ export default function DetalleGuiaPage() {
             comentario: comentario.trim(),
             fecha_creacion: new Date().toISOString(),
           })
-
         if (errorNovedad) {
           console.error('Error guardando novedad:', errorNovedad)
-          // No lanzar error, solo loguear
+        }
+      }
+
+      if (nuevoEstado === 'entregada') {
+        const { data: lineas } = await supabase
+          .from('guias_productos')
+          .select('producto_id, cantidad')
+          .eq('guia_id', guia.id)
+        for (const linea of lineas ?? []) {
+          const { data: fila } = await supabase
+            .from('inventario_motorizado')
+            .select('cantidad')
+            .eq('motorizado_id', guia.motorizado_asignado)
+            .eq('producto_id', linea.producto_id)
+            .maybeSingle()
+          const actual = fila?.cantidad ?? 0
+          const nueva = actual - linea.cantidad
+          if (nueva <= 0) {
+            await supabase
+              .from('inventario_motorizado')
+              .delete()
+              .eq('motorizado_id', guia.motorizado_asignado)
+              .eq('producto_id', linea.producto_id)
+          } else {
+            await supabase
+              .from('inventario_motorizado')
+              .update({
+                cantidad: nueva,
+                fecha_actualizacion: new Date().toISOString(),
+              })
+              .eq('motorizado_id', guia.motorizado_asignado)
+              .eq('producto_id', linea.producto_id)
+          }
+          await supabase.from('movimientos_inventario').insert({
+            motorizado_id: guia.motorizado_asignado,
+            producto_id: linea.producto_id,
+            tipo: 'salida_entrega',
+            cantidad: linea.cantidad,
+            guia_id: guia.id,
+            usuario_id: user.id,
+          })
         }
       }
 

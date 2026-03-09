@@ -171,7 +171,7 @@ export default function LoginPage() {
           </button>
         </form>
         <div className='flex justify-center mt-4'>
-          <span className="text-xs text-gray-500 text-center"> Versión 24-11-25 02 </span>
+          <span className="text-xs text-gray-500 text-center"> Versión 09-03-26 01 </span>
         </div>
       </div>
     </div>

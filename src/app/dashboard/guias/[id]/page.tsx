@@ -340,23 +340,33 @@ export default function DetalleGuiaPage() {
           .from('guias_productos')
           .select('producto_id, cantidad')
           .eq('guia_id', guia.id)
-        for (const linea of lineas ?? []) {
-          const { data: fila } = await supabase
+        const lineasEntregada = lineas ?? []
+
+        for (const linea of lineasEntregada) {
+          const { data: fila, error: errStock } = await supabase
             .from('inventario_motorizado')
             .select('cantidad')
             .eq('motorizado_id', guia.motorizado_asignado)
             .eq('producto_id', linea.producto_id)
             .maybeSingle()
+          if (errStock) {
+            await supabase.from('guias').update({ estado: estadoAnterior, fecha_entrega: guia.fecha_entrega }).eq('id', guia.id)
+            throw new Error('No se pudo leer el inventario. ¿Políticas RLS? ' + errStock.message)
+          }
           const actual = fila?.cantidad ?? 0
           const nueva = actual - linea.cantidad
           if (nueva <= 0) {
-            await supabase
+            const { error: errDel } = await supabase
               .from('inventario_motorizado')
               .delete()
               .eq('motorizado_id', guia.motorizado_asignado)
               .eq('producto_id', linea.producto_id)
+            if (errDel) {
+              await supabase.from('guias').update({ estado: estadoAnterior, fecha_entrega: guia.fecha_entrega }).eq('id', guia.id)
+              throw new Error('No se pudo restar inventario (borrar). ' + errDel.message)
+            }
           } else {
-            await supabase
+            const { error: errUpd } = await supabase
               .from('inventario_motorizado')
               .update({
                 cantidad: nueva,
@@ -364,8 +374,12 @@ export default function DetalleGuiaPage() {
               })
               .eq('motorizado_id', guia.motorizado_asignado)
               .eq('producto_id', linea.producto_id)
+            if (errUpd) {
+              await supabase.from('guias').update({ estado: estadoAnterior, fecha_entrega: guia.fecha_entrega }).eq('id', guia.id)
+              throw new Error('No se pudo restar inventario (actualizar). ' + errUpd.message)
+            }
           }
-          await supabase.from('movimientos_inventario').insert({
+          const { error: errMov } = await supabase.from('movimientos_inventario').insert({
             motorizado_id: guia.motorizado_asignado,
             producto_id: linea.producto_id,
             tipo: 'salida_entrega',
@@ -373,6 +387,10 @@ export default function DetalleGuiaPage() {
             guia_id: guia.id,
             usuario_id: user.id,
           })
+          if (errMov) {
+            await supabase.from('guias').update({ estado: estadoAnterior, fecha_entrega: guia.fecha_entrega }).eq('id', guia.id)
+            throw new Error('No se pudo registrar movimiento de inventario. ' + errMov.message)
+          }
         }
       }
 

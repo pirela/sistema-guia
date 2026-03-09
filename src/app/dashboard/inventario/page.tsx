@@ -91,15 +91,19 @@ export default function InventarioPage() {
     if (!motorizadoId) return
     try {
       setLoadingStock(true)
-      const res = await fetch(
-        `/api/inventario?motorizado_id=${encodeURIComponent(motorizadoId)}`
-      )
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || res.statusText)
-      }
-      const data = await res.json()
-      setStock(data)
+      const { data, error } = await supabase
+        .from('inventario_motorizado')
+        .select(`
+          motorizado_id,
+          producto_id,
+          cantidad,
+          fecha_actualizacion,
+          producto:productos(id, nombre, codigo_sku)
+        `)
+        .eq('motorizado_id', motorizadoId)
+        .order('cantidad', { ascending: false })
+      if (error) throw error
+      setStock(data ?? [])
     } catch (e) {
       console.error(e)
       alert('Error al cargar stock: ' + (e instanceof Error ? e.message : ''))
@@ -122,18 +126,37 @@ export default function InventarioPage() {
     }
     setEnviandoCargar(true)
     try {
-      const res = await fetch('/api/inventario/cargar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { data: existente } = await supabase
+        .from('inventario_motorizado')
+        .select('cantidad')
+        .eq('motorizado_id', motorizadoId)
+        .eq('producto_id', cargarForm.producto_id)
+        .maybeSingle()
+      if (existente) {
+        const { error } = await supabase
+          .from('inventario_motorizado')
+          .update({
+            cantidad: existente.cantidad + cantidad,
+            fecha_actualizacion: new Date().toISOString(),
+          })
+          .eq('motorizado_id', motorizadoId)
+          .eq('producto_id', cargarForm.producto_id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('inventario_motorizado').insert({
           motorizado_id: motorizadoId,
           producto_id: cargarForm.producto_id,
           cantidad,
-          usuario_id: user.id,
-        }),
+        })
+        if (error) throw error
+      }
+      await supabase.from('movimientos_inventario').insert({
+        motorizado_id: motorizadoId,
+        producto_id: cargarForm.producto_id,
+        tipo: 'entrada',
+        cantidad,
+        usuario_id: user.id,
       })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || res.statusText)
       alert('Stock cargado correctamente')
       setCargarForm({ producto_id: '', cantidad: '' })
       fetchStock()
@@ -157,19 +180,45 @@ export default function InventarioPage() {
     }
     setEnviandoRestar(true)
     try {
-      const res = await fetch('/api/inventario/restar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          motorizado_id: motorizadoId,
-          producto_id: restarForm.producto_id,
-          cantidad,
-          comentario: restarForm.comentario || undefined,
-          usuario_id: user.id,
-        }),
+      const { data: fila, error: errSelect } = await supabase
+        .from('inventario_motorizado')
+        .select('cantidad')
+        .eq('motorizado_id', motorizadoId)
+        .eq('producto_id', restarForm.producto_id)
+        .maybeSingle()
+      if (errSelect) throw errSelect
+      const actual = fila?.cantidad ?? 0
+      if (actual < cantidad) {
+        alert(`Stock insuficiente: tiene ${actual}, intentas restar ${cantidad}`)
+        return
+      }
+      const nuevaCantidad = actual - cantidad
+      if (nuevaCantidad === 0) {
+        const { error } = await supabase
+          .from('inventario_motorizado')
+          .delete()
+          .eq('motorizado_id', motorizadoId)
+          .eq('producto_id', restarForm.producto_id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('inventario_motorizado')
+          .update({
+            cantidad: nuevaCantidad,
+            fecha_actualizacion: new Date().toISOString(),
+          })
+          .eq('motorizado_id', motorizadoId)
+          .eq('producto_id', restarForm.producto_id)
+        if (error) throw error
+      }
+      await supabase.from('movimientos_inventario').insert({
+        motorizado_id: motorizadoId,
+        producto_id: restarForm.producto_id,
+        tipo: 'salida_manual',
+        cantidad,
+        comentario: restarForm.comentario || null,
+        usuario_id: user.id,
       })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || res.statusText)
       alert('Stock restado correctamente')
       setRestarForm({ producto_id: '', cantidad: '', comentario: '' })
       fetchStock()

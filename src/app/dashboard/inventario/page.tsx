@@ -48,7 +48,7 @@ export default function InventarioPage() {
     } else {
       setStock([])
     }
-  }, [motorizadoId])
+  }, [motorizadoId, productos.length])
 
   const fetchMotorizados = async () => {
     try {
@@ -89,26 +89,36 @@ export default function InventarioPage() {
 
   const fetchStock = async () => {
     if (!motorizadoId) return
+    setLoadingStock(true)
+    const timeoutMs = 12000
+    const timeoutId = setTimeout(() => setLoadingStock(false), timeoutMs)
+
     try {
-      setLoadingStock(true)
       const { data, error } = await supabase
         .from('inventario_motorizado')
-        .select(`
-          motorizado_id,
-          producto_id,
-          cantidad,
-          fecha_actualizacion,
-          producto:productos(id, nombre, codigo_sku)
-        `)
+        .select('motorizado_id, producto_id, cantidad, fecha_actualizacion')
         .eq('motorizado_id', motorizadoId)
         .order('cantidad', { ascending: false })
+
+      clearTimeout(timeoutId)
       if (error) throw error
-      setStock(data ?? [])
+
+      const rows = (data ?? []).map((row) => ({
+        ...row,
+        producto: {
+          id: row.producto_id,
+          nombre: productos.find((p) => p.id === row.producto_id)?.nombre ?? row.producto_id,
+          codigo_sku: productos.find((p) => p.id === row.producto_id)?.codigo_sku ?? null,
+        },
+      }))
+      setStock(rows)
     } catch (e) {
+      clearTimeout(timeoutId)
       console.error(e)
       alert('Error al cargar stock: ' + (e instanceof Error ? e.message : ''))
       setStock([])
     } finally {
+      clearTimeout(timeoutId)
       setLoadingStock(false)
     }
   }

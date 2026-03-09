@@ -263,11 +263,11 @@ export default function DetalleGuiaPage() {
     if (!guia || !user || !id) return
 
     if (nuevoEstado === 'entregada') {
-      const { data: lineas } = await supabase
+      const { data: lineasValidar } = await supabase
         .from('guias_productos')
-        .select('producto_id, cantidad, producto:productos(id, nombre)')
+        .select('producto_id, cantidad')
         .eq('guia_id', guia.id)
-      const lineasGuia = lineas ?? []
+      const lineasGuia = lineasValidar ?? []
 
       const { data: inventarioRows } = await supabase
         .from('inventario_motorizado')
@@ -283,7 +283,7 @@ export default function DetalleGuiaPage() {
         const necesito = linea.cantidad
         const tiene = stockMap[linea.producto_id] ?? 0
         if (tiene < necesito) {
-          const nombre = (linea.producto as { nombre?: string })?.nombre ?? linea.producto_id
+          const nombre = productos.find((p) => p.producto_id === linea.producto_id)?.producto?.nombre ?? linea.producto_id
           faltantes.push(`${nombre} (necesita ${necesito}, tiene ${tiene})`)
         }
       }

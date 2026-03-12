@@ -32,6 +32,7 @@ export default function DashboardPage() {
     { title: 'Guías', icon: '📋', href: '/dashboard/guias', color: 'bg-blue-500' },
     { title: 'Crear Guía', icon: '➕', href: '/dashboard/guias/crear', color: 'bg-green-500' },
     { title: 'Productos', icon: '📦', href: '/dashboard/productos', color: 'bg-purple-500' },
+    { title: 'Inventario', icon: '🧾', href: '/dashboard/inventario', color: 'bg-teal-500' },
     { title: 'Usuarios', icon: '👥', href: '/dashboard/usuarios', color: 'bg-orange-500' },
     { title: 'Reportes', icon: '📊', href: '/dashboard/reportes', color: 'bg-pink-500' },
   ]

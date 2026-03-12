@@ -447,47 +447,149 @@ export default function MisGuiasPage() {
     estadoAnterior: EstadoGuia | null,
     comentario: string
   ) => {
+    const motorizadoId = user?.id
+    if (!motorizadoId) return
+
+    if (nuevoEstado === 'entregada') {
+      const { data: lineasValidar } = await supabase
+        .from('guias_productos')
+        .select('producto_id, cantidad')
+        .eq('guia_id', guiaId)
+      const lineasGuia = lineasValidar ?? []
+
+      const { data: inventarioRows } = await supabase
+        .from('inventario_motorizado')
+        .select('producto_id, cantidad')
+        .eq('motorizado_id', motorizadoId)
+      const stockMap: Record<string, number> = {}
+      for (const row of inventarioRows ?? []) {
+        stockMap[row.producto_id] = row.cantidad
+      }
+
+      const faltantes: string[] = []
+      for (const linea of lineasGuia) {
+        const necesito = linea.cantidad
+        const tiene = stockMap[linea.producto_id] ?? 0
+        if (tiene < necesito) {
+          faltantes.push(`Producto ${linea.producto_id} (necesita ${necesito}, tiene ${tiene})`)
+        }
+      }
+      if (faltantes.length > 0) {
+        alert(
+          'No se puede marcar como entregada: no tienes stock suficiente.\n\n' +
+            faltantes.join('\n')
+        )
+        return
+      }
+    }
+
     try {
-      // Actualizar estado de la guía
+      const guiaActual = guias.find((g) => g.id === guiaId)
+      const fechaEntregaAnterior = guiaActual?.fecha_entrega ?? null
+
       const { error: errorGuia } = await supabase
         .from('guias')
-        .update({ 
+        .update({
           estado: nuevoEstado,
           actualizado_por: user?.id,
-          ...(nuevoEstado === 'entregada' ? { fecha_entrega: new Date().toISOString() } : {})
+          ...(nuevoEstado === 'entregada' ? { fecha_entrega: new Date().toISOString() } : {}),
         })
         .eq('id', guiaId)
 
       if (errorGuia) throw errorGuia
 
-      // Si hay comentario, guardar en tabla novedades
       if (comentario.trim() && user?.id) {
-        const { error: errorNovedad } = await supabase
-          .from('novedades')
-          .insert({
+        const { error: errorNovedad } = await supabase.from('novedades').insert({
+          guia_id: guiaId,
+          usuario_id: user.id,
+          comentario: comentario.trim(),
+          fecha_creacion: new Date().toISOString(),
+        })
+        if (errorNovedad) console.error('Error guardando novedad:', errorNovedad)
+      }
+
+      if (nuevoEstado === 'entregada') {
+        const { data: lineas } = await supabase
+          .from('guias_productos')
+          .select('producto_id, cantidad')
+          .eq('guia_id', guiaId)
+        const lineasEntregada = lineas ?? []
+
+        for (const linea of lineasEntregada) {
+          const { data: fila, error: errStock } = await supabase
+            .from('inventario_motorizado')
+            .select('cantidad')
+            .eq('motorizado_id', motorizadoId)
+            .eq('producto_id', linea.producto_id)
+            .maybeSingle()
+          if (errStock) {
+            await supabase
+              .from('guias')
+              .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
+              .eq('id', guiaId)
+            throw new Error('No se pudo leer el inventario. ' + errStock.message)
+          }
+          const actual = fila?.cantidad ?? 0
+          const nueva = actual - linea.cantidad
+          if (nueva <= 0) {
+            const { error: errDel } = await supabase
+              .from('inventario_motorizado')
+              .delete()
+              .eq('motorizado_id', motorizadoId)
+              .eq('producto_id', linea.producto_id)
+            if (errDel) {
+              await supabase
+                .from('guias')
+                .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
+                .eq('id', guiaId)
+              throw new Error('No se pudo restar inventario (borrar). ' + errDel.message)
+            }
+          } else {
+            const { error: errUpd } = await supabase
+              .from('inventario_motorizado')
+              .update({
+                cantidad: nueva,
+                fecha_actualizacion: new Date().toISOString(),
+              })
+              .eq('motorizado_id', motorizadoId)
+              .eq('producto_id', linea.producto_id)
+            if (errUpd) {
+              await supabase
+                .from('guias')
+                .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
+                .eq('id', guiaId)
+              throw new Error('No se pudo restar inventario (actualizar). ' + errUpd.message)
+            }
+          }
+          const { error: errMov } = await supabase.from('movimientos_inventario').insert({
+            motorizado_id: motorizadoId,
+            producto_id: linea.producto_id,
+            tipo: 'salida_entrega',
+            cantidad: linea.cantidad,
             guia_id: guiaId,
             usuario_id: user.id,
-            comentario: comentario.trim(),
-            fecha_creacion: new Date().toISOString(),
           })
-
-        if (errorNovedad) {
-          console.error('Error guardando novedad:', errorNovedad)
-          // No lanzar error, solo loguear, porque el cambio de estado ya se hizo
+          if (errMov) {
+            await supabase
+              .from('guias')
+              .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
+              .eq('id', guiaId)
+            throw new Error('No se pudo registrar movimiento. ' + errMov.message)
+          }
         }
       }
-      
-      // Refrescar contadores y recargar guías
+
       fetchContadores().then(setContadores)
       setGuias([])
       setOffset(0)
       setHasMore(true)
       fetchMisGuias(0, true)
-      
+
       alert('Estado actualizado correctamente')
-    } catch (error) {
+    } catch (error: unknown) {
+      const mensaje = error instanceof Error ? error.message : String(error)
       console.error('Error actualizando estado:', error)
-      alert('Error al actualizar estado')
+      alert('Error al actualizar estado: ' + mensaje)
     }
   }
 

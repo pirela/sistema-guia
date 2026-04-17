@@ -1,0 +1,23 @@
+curl.exe -X POST "https://{SHOP}.myshopify.com/admin/oauth/access_token"
+  -H "Content-Type: application/json"
+  -H "Accept: application/json"
+  -d "{\"client_id\":\"{CLIENT_ID}\",\"client_secret\":\"{CLIENT_SECRET}\",\"code\":\"{CODE}\"}"
+
+
+ESTE ME DA EL SCOPE, LO PEGO EN CHROME
+
+https://{SHOP}.myshopify.com/admin/oauth/authorize?client_id=CLIENT_ID&scope=read_all_orders,read_customer_events,read_customers,read_customer_data_erasure,read_customer_payment_methods,read_orders,read_product_feeds,read_product_listings,read_products&redirect_uri=https%3A%2F%2Fexample.com&state=xyz987
+
+AGARRO EL SCOPE
+
+
+Y EJECUTO EN POSTMAN UN POST 
+
+URL: https://y48azr-w8.myshopify.com/admin/oauth/access_token
+BODY: {
+
+    "client_id": "CLIENT_ID",
+    "client_secret": "client_secret",
+    "code": "CODE"
+
+}

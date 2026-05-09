@@ -17,14 +17,23 @@ const formatearMoneda = (valor: number): string => {
   return valor.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+/** Escala global de texto (+15%) para impresión térmica */
+const ESCALA_TEXTO_IMPRESION = 1.15
+/** Tamaño de fuente en pt (jsPDF) escalado */
+const fz = (pt: number): number => Math.round(pt * ESCALA_TEXTO_IMPRESION * 10) / 10
+/** Espaciado vertical en mm escalado (alineado al +15% del texto) */
+const mmEsc = (mm: number): number => Math.round(mm * ESCALA_TEXTO_IMPRESION * 100) / 100
+
+const FUENTE_TERMICA = 'helvetica' as const
+
 const generarCodigoBarras = async (texto: string): Promise<string> => {
   const canvas = document.createElement('canvas')
   JsBarcode(canvas, texto, {
     format: 'CODE128',
-    width: 2,
-    height: 40,
+    width: mmEsc(2),
+    height: Math.round(40 * ESCALA_TEXTO_IMPRESION),
     displayValue: true,
-    fontSize: 12,
+    fontSize: fz(12),
     margin: 5
   })
   return canvas.toDataURL('image/png')
@@ -100,12 +109,12 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     }
 
     doc.setTextColor(0, 0, 0)
-    doc.setFontSize(14)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(14))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.text('RayoEntrega', pageWidth / 2, 8, { align: 'center' })
     
-    doc.setFontSize(7)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(7))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     const fechaGeneracion = new Date().toLocaleDateString('es-CO', { 
       year: 'numeric', 
       month: '2-digit', 
@@ -119,12 +128,12 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.setFillColor(236, 240, 241)
     doc.rect(margin, yPosition, pageWidth - 2 * margin, 10, 'F')
     
-    doc.setFontSize(9)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(9))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.text(`GUÍA: ${guia.numero_guia}`, margin + 2, yPosition + 4)
     doc.text('PAQUETES: 1', rightColumn - 2, yPosition + 4, { align: 'right' })
     
-    doc.setFontSize(7)
+    doc.setFontSize(fz(7))
     doc.text(`TOTAL: $${formatearMoneda(guia.monto_recaudar)}`, pageWidth / 2, yPosition + 8, { align: 'center' })
     
     yPosition += 12
@@ -134,13 +143,13 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.line(margin, yPosition, rightColumn, yPosition)
     yPosition += 4
 
-    doc.setFontSize(7)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(7))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(52, 73, 94)
     doc.text('REMITENTE', margin, yPosition)
     yPosition += 4
     
-    doc.setFont('arial', 'bold')
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(0, 0, 0)
     doc.text('Colombiaeasystore', margin + 2, yPosition)
     doc.text('ID Bodega: 34856', rightColumn - 2, yPosition, { align: 'right' })
@@ -153,41 +162,42 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.line(margin, yPosition, rightColumn, yPosition)
     yPosition += 4
 
-    doc.setFont('arial', 'bold')
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(52, 73, 94)
     doc.text('DESTINATARIO', margin, yPosition)
     yPosition += 4
     
-    doc.setFontSize(8)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(8))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(0, 0, 0)
     doc.text(guia.nombre_cliente, margin + 2, yPosition)
     
     yPosition += 5
 
-    doc.setFontSize(7)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(7))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.text('Cundinamarca, Bogotá', margin + 2, yPosition)
     
     yPosition += 5
 
-    doc.setFont('arial', 'bold')
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(52, 73, 94)
     doc.text('Dirección:', margin + 2, yPosition)
-    yPosition += 3.5
+    yPosition += mmEsc(3.5)
     
-    doc.setFont('arial', 'bold')
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(0, 0, 0)
-    doc.setFontSize(6.5)
+    doc.setFontSize(fz(6.5))
     const direccionSplit = doc.splitTextToSize(guia.direccion, pageWidth - 2 * margin - 4)
     doc.text(direccionSplit, margin + 2, yPosition)
-    yPosition += (direccionSplit.length * 3.5) + 2
+    const lineHeightDireccion = mmEsc(3.5)
+    yPosition += direccionSplit.length * lineHeightDireccion + 2
     
-    doc.setFontSize(7)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(7))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(52, 73, 94)
     doc.text('Tel:', margin + 2, yPosition)
-    doc.setFont('arial', 'bold')
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(0, 0, 0)
     doc.text(guia.telefono_cliente, margin + 8, yPosition)
     
@@ -197,14 +207,14 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.line(margin, yPosition, rightColumn, yPosition)
     yPosition += 4
 
-    doc.setFontSize(7)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(7))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(52, 73, 94)
     doc.text('CONTENIDO DEL PAQUETE', margin, yPosition)
     yPosition += 4
     
-    doc.setFontSize(5.5)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(5.5))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.setTextColor(0, 0, 0)
 
     const colProductoX = margin + 2
@@ -213,10 +223,10 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
       rightColumn - colProductoX - 14
     )
 
-    const lineHeightProducto = 3.2
-    const padSuperiorCaja = 3
-    const gapEntreProductos = 0.6
-    const padInferiorCaja = 2
+    const lineHeightProducto = mmEsc(3.2)
+    const padSuperiorCaja = mmEsc(3)
+    const gapEntreProductos = mmEsc(0.6)
+    const padInferiorCaja = mmEsc(2)
 
     const bloquesProducto = guia.productos.map((prod) => {
       const nombreLimpio = quitarEmojisYPictogramas(prod.producto.nombre)
@@ -257,18 +267,19 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
       doc.line(margin, yPosition, rightColumn, yPosition)
       yPosition += 4
       
-      doc.setFontSize(7)
-      doc.setFont('arial', 'bold')
+      doc.setFontSize(fz(7))
+      doc.setFont(FUENTE_TERMICA, 'bold')
       doc.setTextColor(52, 73, 94)
       doc.text('OBSERVACIONES', margin, yPosition)
       yPosition += 4
       
-      doc.setFont('arial', 'bold')
+      doc.setFont(FUENTE_TERMICA, 'bold')
       doc.setTextColor(0, 0, 0)
-      doc.setFontSize(6)
+      doc.setFontSize(fz(6))
       const obsSplit = doc.splitTextToSize(guia.observacion, pageWidth - 2 * margin - 4)
+      const lineHeightObs = mmEsc(3)
       doc.text(obsSplit, margin + 2, yPosition)
-      yPosition += (obsSplit.length * 3) + 2
+      yPosition += obsSplit.length * lineHeightObs + 2
     }
 
     yPosition += 3
@@ -288,8 +299,8 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.rect(0, 147, pageWidth, 3, 'F')
     /*
     doc.setTextColor(255, 255, 255)
-    doc.setFontSize(6)
-    doc.setFont('arial', 'bold')
+    doc.setFontSize(fz(6))
+    doc.setFont(FUENTE_TERMICA, 'bold')
     doc.text('contacto@rayoentrega.com', pageWidth / 2, 148, { align: 'center' })
     */
   }

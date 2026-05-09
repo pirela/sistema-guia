@@ -62,22 +62,13 @@ const cargarLogo = async (): Promise<string> => {
   }
 }
 
-const truncarTexto = (doc: jsPDF, texto: string, maxWidth: number): string => {
-  const palabras = texto.split(' ')
-  let resultado = ''
-  
-  for (const palabra of palabras) {
-    const prueba = resultado ? `${resultado} ${palabra}` : palabra
-    const ancho = doc.getTextWidth(prueba)
-    console.info("ancho", ancho)
-    console.info("maxWidth", maxWidth)
-    if (ancho > maxWidth) {
-      return resultado ? `${resultado}...` : `${palabra.substring(0, palabra.length - 3)}...`
-    }
-    resultado = prueba
-  }
-  
-  return resultado
+/** Quita emoticones y pictogramas: las fuentes estándar de jsPDF no los dibujan bien. */
+const quitarEmojisYPictogramas = (texto: string): string => {
+  return texto
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\uFE0F\u200D]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
@@ -212,28 +203,52 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.text('CONTENIDO DEL PAQUETE', margin, yPosition)
     yPosition += 4
     
-    doc.setFillColor(249, 249, 249)
-    const productosHeight = guia.productos.length * 5
-    doc.rect(margin, yPosition, pageWidth - 2 * margin, productosHeight, 'F')
-    
-    yPosition += 3
-    
     doc.setFontSize(5.5)
     doc.setFont('arial', 'bold')
     doc.setTextColor(0, 0, 0)
-    
-    guia.productos.forEach((prod) => {
-      const productoTexto = `• ${prod.producto.nombre}`
-      //const maxWidth = pageWidth - 2 * margin - 30
-      const productoTruncado = truncarTexto(doc, productoTexto, 52).toLowerCase()
-      doc.text(productoTruncado, margin + 2, yPosition)
-      
-      doc.setFont('arial', 'bold')
-      doc.text(`x${prod.cantidad}`, rightColumn - 8, yPosition)
-      doc.setFont('arial', 'bold')
-      
-      yPosition += 4
+
+    const colProductoX = margin + 2
+    const anchoTextoProducto = Math.max(
+      20,
+      rightColumn - colProductoX - 14
+    )
+
+    const lineHeightProducto = 3.2
+    const padSuperiorCaja = 3
+    const gapEntreProductos = 0.6
+    const padInferiorCaja = 2
+
+    const bloquesProducto = guia.productos.map((prod) => {
+      const nombreLimpio = quitarEmojisYPictogramas(prod.producto.nombre)
+      const etiqueta = nombreLimpio.length > 0 ? nombreLimpio : '(sin nombre)'
+      const lineas = doc.splitTextToSize(`• ${etiqueta}`, anchoTextoProducto)
+      return { lineas, cantidad: prod.cantidad }
     })
+
+    const productosHeight =
+      padSuperiorCaja +
+      padInferiorCaja +
+      bloquesProducto.reduce((acc, b, idx) => {
+        const altoBloque = b.lineas.length * lineHeightProducto
+        const gap = idx < bloquesProducto.length - 1 ? gapEntreProductos : 0
+        return acc + altoBloque + gap
+      }, 0)
+
+    doc.setFillColor(249, 249, 249)
+    doc.rect(margin, yPosition, pageWidth - 2 * margin, productosHeight, 'F')
+
+    let yProd = yPosition + padSuperiorCaja
+    bloquesProducto.forEach((bloque, idx) => {
+      bloque.lineas.forEach((linea: string, i: number) => {
+        doc.text(linea, colProductoX, yProd + i * lineHeightProducto)
+      })
+      doc.text(`x${bloque.cantidad}`, rightColumn - 8, yProd)
+      const gap =
+        idx < bloquesProducto.length - 1 ? gapEntreProductos : 0
+      yProd += bloque.lineas.length * lineHeightProducto + gap
+    })
+
+    yPosition += productosHeight
 
     //yPosition += 1
 

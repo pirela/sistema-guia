@@ -111,7 +111,7 @@ export const generarPDFGuiasAsignadas = async (guias: GuiaCompleta[]) => {
     doc.setTextColor(0, 0, 0)
     doc.setFontSize(fz(14))
     doc.setFont(FUENTE_TERMICA, 'bold')
-    doc.text('RayoEntrega', pageWidth / 2, 8, { align: 'center' })
+    doc.text('NexCargo Prime', pageWidth / 2, 8, { align: 'center' })
     
     doc.setFontSize(fz(7))
     doc.setFont(FUENTE_TERMICA, 'bold')

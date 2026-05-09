@@ -45,6 +45,11 @@ export default function GuiasPage() {
   // Estados para selección de guías
   const [guiasSeleccionadas, setGuiasSeleccionadas] = useState<Set<string>>(new Set())
   const [generandoPDFSeleccionadas, setGenerandoPDFSeleccionadas] = useState(false)
+
+  // Reasignación masiva (admin)
+  const [modalReasignarMasivo, setModalReasignarMasivo] = useState(false)
+  const [motorizadoReasignarId, setMotorizadoReasignarId] = useState('')
+  const [reasignandoMasivo, setReasignandoMasivo] = useState(false)
   
   // Calcular fechas para filtro inicial (últimos 3 días)
   const calcularFechasIniciales = () => {
@@ -508,6 +513,69 @@ export default function GuiasPage() {
     }
   }
 
+  const claveCacheListadoGuias = `guias-${filtroNombreClienteDebounced}-${filtroFechaDesde}-${filtroFechaHasta}-${filtroMotorizado}`
+
+  const abrirModalReasignarMasivo = () => {
+    if (guiasSeleccionadas.size === 0) {
+      alert('Selecciona al menos una guía.')
+      return
+    }
+    setMotorizadoReasignarId('')
+    setModalReasignarMasivo(true)
+  }
+
+  const ejecutarReasignacionMasiva = async () => {
+    if (!motorizadoReasignarId) {
+      alert('Selecciona un motorizado.')
+      return
+    }
+    const guiasObjetivo = guiasFiltradas.filter((g) => guiasSeleccionadas.has(g.id))
+    const ids = guiasObjetivo.map((g) => g.id)
+    if (ids.length === 0) {
+      alert('No hay guías seleccionadas visibles en el listado actual.')
+      return
+    }
+
+    const motorNombre =
+      motorizados[motorizadoReasignarId]?.nombre ||
+      motorizados[motorizadoReasignarId]?.username ||
+      'el motorizado elegido'
+
+    setReasignandoMasivo(true)
+    try {
+      // Lotes para evitar límites de URL/tamaño en PostgREST con muchas UUID
+      const TAM_LOTE = 60
+      for (let i = 0; i < ids.length; i += TAM_LOTE) {
+        const lote = ids.slice(i, i + TAM_LOTE)
+        const { error } = await supabase
+          .from('guias')
+          .update({
+            motorizado_asignado: motorizadoReasignarId,
+            fecha_actualizacion: new Date().toISOString(),
+          })
+          .in('id', lote)
+
+        if (error) throw error
+      }
+
+      clearCache(claveCacheListadoGuias)
+      await fetchGuias()
+      setModalReasignarMasivo(false)
+      setMotorizadoReasignarId('')
+      setGuiasSeleccionadas(new Set())
+      alert(`Reasignación correcta: ${ids.length} guía(s) asignadas a ${motorNombre}.`)
+    } catch (error: unknown) {
+      console.error('Error en reasignación masiva:', error)
+      const mensaje =
+        error && typeof error === 'object' && 'message' in error
+          ? String((error as { message: string }).message)
+          : 'Error desconocido'
+      alert('No se pudo completar la reasignación: ' + mensaje)
+    } finally {
+      setReasignandoMasivo(false)
+    }
+  }
+
   // Función para manejar el clic en el header de ordenamiento
   const handleOrdenar = (campo: string) => {
     if (ordenarPor === campo) {
@@ -562,6 +630,42 @@ export default function GuiasPage() {
     )
   }
 
+  const etiquetasEstadoGuia: Record<string, string> = {
+    pendiente: 'Pendiente',
+    asignada: 'Asignada',
+    en_ruta: 'En Ruta',
+    entregada: 'Entregada',
+    finalizada: 'Finalizada',
+    cancelada: 'Cancelada',
+    rechazada: 'Rechazada',
+    novedad: 'Novedad',
+  }
+
+  const listaReasignarParaModal = modalReasignarMasivo
+    ? guiasFiltradas.filter((g) => guiasSeleccionadas.has(g.id))
+    : []
+
+  const conteoPorEstadoReasignar: Record<string, number> = {}
+  for (const g of listaReasignarParaModal) {
+    conteoPorEstadoReasignar[g.estado] = (conteoPorEstadoReasignar[g.estado] || 0) + 1
+  }
+
+  const motorDestinoNombre = motorizadoReasignarId
+    ? motorizados[motorizadoReasignarId]?.nombre ||
+      motorizados[motorizadoReasignarId]?.username ||
+      '(sin nombre)'
+    : ''
+
+  const guiasYaEnDestino =
+    motorizadoReasignarId === ''
+      ? 0
+      : listaReasignarParaModal.filter((g) => g.motorizado_asignado === motorizadoReasignarId).length
+
+  const montoTotalReasignar = listaReasignarParaModal.reduce(
+    (acc, g) => acc + (Number(g.monto_recaudar) || 0),
+    0
+  )
+
   return (
     <DashboardLayout>
       <div className="space-y-4 sm:space-y-6">
@@ -572,6 +676,15 @@ export default function GuiasPage() {
             <GenerarPDFGuias />
             {guiasSeleccionadas.size > 0 && (
               <>
+                {user?.rol === 'administrador' && (
+                  <button
+                    type="button"
+                    onClick={abrirModalReasignarMasivo}
+                    className="bg-amber-600 text-white px-4 py-2.5 rounded-md hover:bg-amber-700 transition-colors text-sm sm:text-base"
+                  >
+                    Reasignar ({guiasSeleccionadas.size})
+                  </button>
+                )}
                 <button
                   onClick={generarPDFSeleccionadas}
                   disabled={generandoPDFSeleccionadas}
@@ -1061,6 +1174,120 @@ export default function GuiasPage() {
           )}
         </div>
       </div>
+
+      {modalReasignarMasivo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 space-y-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-reasignar-masivo"
+          >
+            <h2
+              id="titulo-reasignar-masivo"
+              className="text-xl font-bold text-gray-900"
+            >
+              Reasignar guías seleccionadas
+            </h2>
+
+            <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-900">
+              <p className="font-semibold mb-1">Resumen</p>
+              <p>
+                <span className="font-medium">Cantidad de guías:</span>{' '}
+                {listaReasignarParaModal.length}
+              </p>
+              <p className="mt-1">
+                <span className="font-medium">Monto total a recaudar (suma):</span>{' '}
+                ${montoTotalReasignar.toFixed(2)}
+              </p>
+              {Object.keys(conteoPorEstadoReasignar).length > 0 && (
+                <div className="mt-2">
+                  <p className="font-medium mb-1">Por estado:</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-blue-800">
+                    {Object.entries(conteoPorEstadoReasignar).map(([estado, n]) => (
+                      <li key={estado}>
+                        {etiquetasEstadoGuia[estado] || estado}: {n}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Motorizado destino
+              </label>
+              <select
+                value={motorizadoReasignarId}
+                onChange={(e) => setMotorizadoReasignarId(e.target.value)}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+              >
+                <option value="">— Seleccionar motorizado —</option>
+                {Object.values(motorizados)
+                  .filter((m) => m.activo)
+                  .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.nombre}
+                      {m.username ? ` (@${m.username})` : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            {motorizadoReasignarId && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 space-y-2">
+                <p className="font-semibold">Al confirmar</p>
+                <p>
+                  Se asignarán <strong>{listaReasignarParaModal.length}</strong> guía
+                  {listaReasignarParaModal.length !== 1 ? 's' : ''} a{' '}
+                  <strong>{motorDestinoNombre}</strong>.
+                </p>
+                {guiasYaEnDestino > 0 && (
+                  <p className="text-amber-900">
+                    {guiasYaEnDestino} de ellas ya estaban asignadas a este motorizado (se actualizarán
+                    igualmente).
+                  </p>
+                )}
+                <ul className="list-disc list-inside space-y-1 text-amber-900">
+                  <li>
+                    El inventario del motorizado <strong>no</strong> se mueve automáticamente: al marcar
+                    &quot;Entregada&quot;, el stock se valida contra el motorizado que figure asignado en
+                    ese momento.
+                  </li>
+                  <li>
+                    Las guías pasarán a verse en <strong>Mis guías</strong> del motorizado destino según
+                    sus filtros habituales.
+                  </li>
+                </ul>
+              </div>
+            )}
+
+            <div className="flex flex-col-reverse sm:flex-row gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalReasignarMasivo(false)
+                  setMotorizadoReasignarId('')
+                }}
+                disabled={reasignandoMasivo}
+                className="flex-1 bg-gray-500 text-white py-2.5 rounded-md hover:bg-gray-600 disabled:opacity-50 text-sm font-medium"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void ejecutarReasignacionMasiva()}
+                disabled={reasignandoMasivo || !motorizadoReasignarId || listaReasignarParaModal.length === 0}
+                className="flex-1 bg-amber-600 text-white py-2.5 rounded-md hover:bg-amber-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm font-medium"
+              >
+                {reasignandoMasivo ? 'Guardando…' : 'Confirmar reasignación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }

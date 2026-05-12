@@ -5,7 +5,7 @@ import ModalComentarioNovedad from '@/components/ModalComentarioNovedad'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
 import { Guia, Producto, EstadoGuia, Usuario } from '@/types/database'
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 
 interface GuiaProducto {
@@ -76,7 +76,10 @@ export default function MisGuiasPage() {
   const [totalGuias, setTotalGuias] = useState(0)
   const [usuarios, setUsuarios] = useState<{ [key: string]: Usuario }>({})
   const observerTarget = useRef<HTMLDivElement>(null)
-  
+  const refCheckboxSeleccionarTodas = useRef<HTMLInputElement>(null)
+  const [idsSeleccion, setIdsSeleccion] = useState<Set<string>>(new Set())
+  const [masivoCargando, setMasivoCargando] = useState(false)
+
   // Estados para modal de novedad
   const [modalNovedad, setModalNovedad] = useState({
     isOpen: false,
@@ -416,6 +419,45 @@ export default function MisGuiasPage() {
       }
     }
   }, [hasMore, loadingMore, loading, loadMoreGuias])
+
+  useEffect(() => {
+    const idsEnVista = new Set(guias.map((g) => g.id))
+    setIdsSeleccion((prev) => {
+      const filtrado = [...prev].filter((id) => idsEnVista.has(id))
+      if (filtrado.length === prev.size && filtrado.every((id) => prev.has(id))) return prev
+      return new Set(filtrado)
+    })
+  }, [guias])
+
+  useEffect(() => {
+    const el = refCheckboxSeleccionarTodas.current
+    if (!el || guias.length === 0) {
+      if (el) el.indeterminate = false
+      return
+    }
+    el.indeterminate = idsSeleccion.size > 0 && idsSeleccion.size < guias.length
+  }, [idsSeleccion, guias.length])
+
+  type ResumenSeleccionMasiva =
+    | { tipo: 'vacio' }
+    | { tipo: 'sin_coincidencia'; n: number }
+    | { tipo: 'mixto'; n: number; estados: EstadoGuia[] }
+    | { tipo: 'asignada'; n: number; ids: string[] }
+    | { tipo: 'en_ruta'; n: number; ids: string[] }
+    | { tipo: 'otro_estado'; n: number; estado: EstadoGuia }
+
+  const resumenSeleccionMasiva: ResumenSeleccionMasiva = useMemo(() => {
+    if (idsSeleccion.size === 0) return { tipo: 'vacio' }
+    const sel = guias.filter((g) => idsSeleccion.has(g.id))
+    if (sel.length === 0) return { tipo: 'sin_coincidencia', n: idsSeleccion.size }
+    const unicos = [...new Set(sel.map((g) => g.estado))]
+    if (unicos.length > 1) return { tipo: 'mixto', n: sel.length, estados: unicos }
+    const estado = unicos[0]
+    const ids = sel.map((g) => g.id)
+    if (estado === 'asignada') return { tipo: 'asignada', n: ids.length, ids }
+    if (estado === 'en_ruta') return { tipo: 'en_ruta', n: ids.length, ids }
+    return { tipo: 'otro_estado', n: sel.length, estado }
+  }, [guias, idsSeleccion])
 
   const actualizarEstado = async (guiaId: string, nuevoEstado: EstadoGuia) => {
     // Buscar la guía actual para obtener su estado
@@ -760,6 +802,102 @@ export default function MisGuiasPage() {
       fetchContadoresLocalidades().then(setContadoresLocalidades)
     }
   }, [user, fetchContadoresLocalidades])
+
+  const aplicarCambioMasivo = useCallback(
+    async (nuevoEstado: 'en_ruta' | 'entregada' | 'rechazada') => {
+      const motorizadoId = user?.id
+      if (!motorizadoId) return
+
+      let validIds: string[] = []
+      if (nuevoEstado === 'en_ruta' && resumenSeleccionMasiva.tipo === 'asignada') {
+        validIds = resumenSeleccionMasiva.ids
+      } else if (
+        (nuevoEstado === 'entregada' || nuevoEstado === 'rechazada') &&
+        resumenSeleccionMasiva.tipo === 'en_ruta'
+      ) {
+        validIds = resumenSeleccionMasiva.ids
+      } else {
+        alert('La selección no permite esta acción.')
+        return
+      }
+
+      if (validIds.length === 0) return
+
+      const labelEtiqueta =
+        nuevoEstado === 'en_ruta'
+          ? 'en ruta'
+          : nuevoEstado === 'entregada'
+            ? 'entregadas'
+            : 'rechazadas'
+
+      if (
+        !confirm(
+          `¿Confirmar ${validIds.length} guía(s) como ${labelEtiqueta}? Solo se actualizará el estado (sin inventario).`
+        )
+      ) {
+        return
+      }
+
+      const estadoOrigen: EstadoGuia = nuevoEstado === 'en_ruta' ? 'asignada' : 'en_ruta'
+
+      setMasivoCargando(true)
+      try {
+        const patch: Record<string, unknown> = {
+          estado: nuevoEstado,
+          actualizado_por: motorizadoId,
+        }
+        if (nuevoEstado === 'entregada') {
+          patch.fecha_entrega = new Date().toISOString()
+        }
+
+        const { data, error } = await supabase
+          .from('guias')
+          .update(patch)
+          .in('id', validIds)
+          .eq('motorizado_asignado', motorizadoId)
+          .eq('estado', estadoOrigen)
+          .select('id')
+
+        if (error) throw error
+
+        const actualizadas = data?.length ?? 0
+        const omitidas = validIds.length - actualizadas
+
+        alert(
+          `Listo: ${actualizadas} actualizada(s).${
+            omitidas > 0
+              ? ` ${omitidas} no aplicada(s) (el estado cambió o ya no están asignadas a ti).`
+              : ''
+          }`
+        )
+
+        setIdsSeleccion(new Set())
+        fetchContadores().then(setContadores)
+        fetchContadoresLocalidades().then(setContadoresLocalidades)
+        setGuias([])
+        setOffset(0)
+        setHasMore(true)
+        await fetchMisGuias(0, true)
+      } catch (error: unknown) {
+        const mensaje = error instanceof Error ? error.message : String(error)
+        console.error('Error cambio masivo:', error)
+        alert('Error al actualizar: ' + mensaje)
+      } finally {
+        setMasivoCargando(false)
+      }
+    },
+    [user?.id, resumenSeleccionMasiva, fetchMisGuias, fetchContadores, fetchContadoresLocalidades]
+  )
+
+  const toggleSeleccionId = (id: string) => {
+    setIdsSeleccion((prev) => {
+      const siguiente = new Set(prev)
+      if (siguiente.has(id)) siguiente.delete(id)
+      else siguiente.add(id)
+      return siguiente
+    })
+  }
+
   /*
   if (!user || user.rol !== 'motorizado') {
     return <div>No tienes permisos para ver esta página</div>
@@ -1009,6 +1147,94 @@ export default function MisGuiasPage() {
           )}
         </div>
 
+        {/* Selección y cambio masivo de estado (solo lógica, sin inventario) */}
+        {guias.length > 0 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  ref={refCheckboxSeleccionarTodas}
+                  type="checkbox"
+                  checked={guias.length > 0 && idsSeleccion.size === guias.length}
+                  onChange={(e) => {
+                    if (e.target.checked) setIdsSeleccion(new Set(guias.map((g) => g.id)))
+                    else setIdsSeleccion(new Set())
+                  }}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span>Seleccionar todas en pantalla</span>
+              </label>
+              {idsSeleccion.size > 0 && (
+                <>
+                  <span className="text-xs text-gray-600">
+                    {idsSeleccion.size} seleccionada{idsSeleccion.size !== 1 ? 's' : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIdsSeleccion(new Set())}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Limpiar
+                  </button>
+                </>
+              )}
+            </div>
+
+            {idsSeleccion.size > 0 && (
+              <div className="border-t border-gray-100 pt-3 flex flex-col sm:flex-row sm:items-center gap-2 flex-wrap">
+                {resumenSeleccionMasiva.tipo === 'sin_coincidencia' && (
+                  <p className="text-xs text-gray-600">
+                    Sincronizando la selección con la lista visible ({resumenSeleccionMasiva.n} marcada
+                    {resumenSeleccionMasiva.n !== 1 ? 's' : ''}).
+                  </p>
+                )}
+                {resumenSeleccionMasiva.tipo === 'mixto' && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex-1">
+                    Selección con varios estados. Para cambio masivo, elige solo guías{' '}
+                    <strong>asignadas</strong> o solo <strong>en ruta</strong>.
+                  </p>
+                )}
+                {resumenSeleccionMasiva.tipo === 'otro_estado' && (
+                  <p className="text-xs text-gray-600">
+                    El cambio masivo solo aplica a guías en estado <strong>asignada</strong> o{' '}
+                    <strong>en_ruta</strong>.
+                  </p>
+                )}
+                {resumenSeleccionMasiva.tipo === 'asignada' && (
+                  <button
+                    type="button"
+                    disabled={masivoCargando}
+                    onClick={() => aplicarCambioMasivo('en_ruta')}
+                    className="px-3 py-2 text-sm rounded-md bg-yellow-600 text-white font-medium hover:bg-yellow-700 disabled:opacity-50"
+                  >
+                    Iniciar ruta ({resumenSeleccionMasiva.n})
+                  </button>
+                )}
+                {resumenSeleccionMasiva.tipo === 'en_ruta' && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={masivoCargando}
+                      onClick={() => aplicarCambioMasivo('entregada')}
+                      className="px-3 py-2 text-sm rounded-md bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
+                    >
+                      Marcar entregadas ({resumenSeleccionMasiva.n})
+                    </button>
+                    <button
+                      type="button"
+                      disabled={masivoCargando}
+                      onClick={() => aplicarCambioMasivo('rechazada')}
+                      className="px-3 py-2 text-sm rounded-md bg-orange-600 text-white font-medium hover:bg-orange-700 disabled:opacity-50"
+                    >
+                      Marcar rechazadas ({resumenSeleccionMasiva.n})
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Contador Total */}
         <div className="flex items-center justify-end">
           <div className="bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
@@ -1030,15 +1256,24 @@ export default function MisGuiasPage() {
               {guias.map((guia) => (
               <div key={guia.id} className="bg-white rounded-lg shadow p-4 sm:p-6 space-y-3 sm:space-y-4">
                 <div className="flex items-stretch justify-between gap-3">
-                  <div className="flex flex-col">
-                    <h3 className="text-base sm:text-lg font-bold text-gray-800">
-                      {guia.numero_guia}
-                    </h3>
-                    <p className="text-xs sm:text-sm text-gray-500">
-                      {new Date(guia.fecha_creacion).toLocaleDateString()}
-                    </p>
+                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={idsSeleccion.has(guia.id)}
+                      onChange={() => toggleSeleccionId(guia.id)}
+                      className="mt-1 w-4 h-4 shrink-0 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      aria-label={`Seleccionar guía ${guia.numero_guia}`}
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <h3 className="text-base sm:text-lg font-bold text-gray-800">
+                        {guia.numero_guia}
+                      </h3>
+                      <p className="text-xs sm:text-sm text-gray-500">
+                        {new Date(guia.fecha_creacion).toLocaleDateString()}
+                      </p>
+                    </div>
                   </div>
-                  <span className={`px-3 py-2 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)} whitespace-nowrap flex items-center justify-center`}>
+                  <span className={`px-3 py-2 text-xs font-semibold rounded-full ${getEstadoColor(guia.estado)} whitespace-nowrap flex items-center justify-center shrink-0`}>
                     {guia.estado}
                   </span>
                 </div>
@@ -1153,6 +1388,10 @@ export default function MisGuiasPage() {
                 </div>
               </div>
               ))}
+
+SH'6823
+GUIAÑSH'6823]CLIENTEÑIrma Lopez]TOTALÑ119900
+
 
               {/* Indicador de carga y trigger para infinite scroll */}
               <div ref={observerTarget} className="py-4">

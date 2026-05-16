@@ -3,6 +3,11 @@
 import DashboardLayout from '@/components/DashboardLayout'
 import ModalComentarioNovedad from '@/components/ModalComentarioNovedad'
 import { useAuth } from '@/hooks/useAuth'
+import {
+  descontarInventarioEntrega,
+  mensajeStockInsuficiente,
+  validarStockEntrega,
+} from '@/lib/inventario-entrega'
 import { supabase } from '@/lib/supabase'
 import { Guia, Producto, EstadoGuia, Usuario } from '@/types/database'
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
@@ -493,34 +498,9 @@ export default function MisGuiasPage() {
     if (!motorizadoId) return
 
     if (nuevoEstado === 'entregada') {
-      const { data: lineasValidar } = await supabase
-        .from('guias_productos')
-        .select('producto_id, cantidad')
-        .eq('guia_id', guiaId)
-      const lineasGuia = lineasValidar ?? []
-
-      const { data: inventarioRows } = await supabase
-        .from('inventario_motorizado')
-        .select('producto_id, cantidad')
-        .eq('motorizado_id', motorizadoId)
-      const stockMap: Record<string, number> = {}
-      for (const row of inventarioRows ?? []) {
-        stockMap[row.producto_id] = row.cantidad
-      }
-
-      const faltantes: string[] = []
-      for (const linea of lineasGuia) {
-        const necesito = linea.cantidad
-        const tiene = stockMap[linea.producto_id] ?? 0
-        if (tiene < necesito) {
-          faltantes.push(`Producto ${linea.producto_id} (necesita ${necesito}, tiene ${tiene})`)
-        }
-      }
-      if (faltantes.length > 0) {
-        alert(
-          'No se puede marcar como entregada: no tienes stock suficiente.\n\n' +
-            faltantes.join('\n')
-        )
+      const validacion = await validarStockEntrega(motorizadoId, [guiaId])
+      if (!validacion.ok) {
+        alert(mensajeStockInsuficiente(validacion.faltantes))
         return
       }
     }
@@ -550,75 +530,14 @@ export default function MisGuiasPage() {
         if (errorNovedad) console.error('Error guardando novedad:', errorNovedad)
       }
 
-      if (nuevoEstado === 'entregada') {
-        const { data: lineas } = await supabase
-          .from('guias_productos')
-          .select('producto_id, cantidad')
-          .eq('guia_id', guiaId)
-        const lineasEntregada = lineas ?? []
-
-        for (const linea of lineasEntregada) {
-          const { data: fila, error: errStock } = await supabase
-            .from('inventario_motorizado')
-            .select('cantidad')
-            .eq('motorizado_id', motorizadoId)
-            .eq('producto_id', linea.producto_id)
-            .maybeSingle()
-          if (errStock) {
-            await supabase
-              .from('guias')
-              .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
-              .eq('id', guiaId)
-            throw new Error('No se pudo leer el inventario. ' + errStock.message)
-          }
-          const actual = fila?.cantidad ?? 0
-          const nueva = actual - linea.cantidad
-          if (nueva <= 0) {
-            const { error: errDel } = await supabase
-              .from('inventario_motorizado')
-              .delete()
-              .eq('motorizado_id', motorizadoId)
-              .eq('producto_id', linea.producto_id)
-            if (errDel) {
-              await supabase
-                .from('guias')
-                .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
-                .eq('id', guiaId)
-              throw new Error('No se pudo restar inventario (borrar). ' + errDel.message)
-            }
-          } else {
-            const { error: errUpd } = await supabase
-              .from('inventario_motorizado')
-              .update({
-                cantidad: nueva,
-                fecha_actualizacion: new Date().toISOString(),
-              })
-              .eq('motorizado_id', motorizadoId)
-              .eq('producto_id', linea.producto_id)
-            if (errUpd) {
-              await supabase
-                .from('guias')
-                .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
-                .eq('id', guiaId)
-              throw new Error('No se pudo restar inventario (actualizar). ' + errUpd.message)
-            }
-          }
-          const { error: errMov } = await supabase.from('movimientos_inventario').insert({
-            motorizado_id: motorizadoId,
-            producto_id: linea.producto_id,
-            tipo: 'salida_entrega',
-            cantidad: linea.cantidad,
-            guia_id: guiaId,
-            usuario_id: user.id,
-          })
-          if (errMov) {
-            await supabase
-              .from('guias')
-              .update({ estado: estadoAnterior, fecha_entrega: fechaEntregaAnterior })
-              .eq('id', guiaId)
-            throw new Error('No se pudo registrar movimiento. ' + errMov.message)
-          }
-        }
+      if (nuevoEstado === 'entregada' && user?.id) {
+        await descontarInventarioEntrega(
+          motorizadoId,
+          guiaId,
+          user.id,
+          estadoAnterior,
+          fechaEntregaAnterior
+        )
       }
 
       fetchContadores().then(setContadores)
@@ -830,11 +749,12 @@ export default function MisGuiasPage() {
             ? 'entregadas'
             : 'rechazadas'
 
-      if (
-        !confirm(
-          `¿Confirmar ${validIds.length} guía(s) como ${labelEtiqueta}? Solo se actualizará el estado (sin inventario).`
-        )
-      ) {
+      const mensajeConfirm =
+        nuevoEstado === 'entregada'
+          ? `¿Confirmar ${validIds.length} guía(s) como entregadas? Se validará tu inventario y se descontará por cada guía.`
+          : `¿Confirmar ${validIds.length} guía(s) como ${labelEtiqueta}?`
+
+      if (!confirm(mensajeConfirm)) {
         return
       }
 
@@ -842,34 +762,95 @@ export default function MisGuiasPage() {
 
       setMasivoCargando(true)
       try {
-        const patch: Record<string, unknown> = {
-          estado: nuevoEstado,
-          actualizado_por: motorizadoId,
-        }
         if (nuevoEstado === 'entregada') {
-          patch.fecha_entrega = new Date().toISOString()
+          const validacion = await validarStockEntrega(motorizadoId, validIds)
+          if (!validacion.ok) {
+            alert(mensajeStockInsuficiente(validacion.faltantes))
+            return
+          }
+
+          let entregadas = 0
+          let omitidas = 0
+          let fallidas = 0
+
+          for (const guiaId of validIds) {
+            const guiaActual = guias.find((g) => g.id === guiaId)
+            const estadoAnterior = guiaActual?.estado ?? 'en_ruta'
+            const fechaEntregaAnterior = guiaActual?.fecha_entrega ?? null
+
+            const { data: actualizada, error: errGuia } = await supabase
+              .from('guias')
+              .update({
+                estado: 'entregada',
+                actualizado_por: motorizadoId,
+                fecha_entrega: new Date().toISOString(),
+              })
+              .eq('id', guiaId)
+              .eq('motorizado_asignado', motorizadoId)
+              .eq('estado', estadoOrigen)
+              .select('id')
+              .maybeSingle()
+
+            if (errGuia) throw errGuia
+            if (!actualizada) {
+              omitidas++
+              continue
+            }
+
+            try {
+              await descontarInventarioEntrega(
+                motorizadoId,
+                guiaId,
+                motorizadoId,
+                estadoAnterior,
+                fechaEntregaAnterior
+              )
+              entregadas++
+            } catch (errInv) {
+              fallidas++
+              console.error(`Error inventario guía ${guiaId}:`, errInv)
+            }
+          }
+
+          const partes = [`Listo: ${entregadas} entregada(s) con inventario descontado.`]
+          if (omitidas > 0) {
+            partes.push(
+              `${omitidas} no aplicada(s) (el estado cambió o ya no están asignadas a ti).`
+            )
+          }
+          if (fallidas > 0) {
+            partes.push(
+              `${fallidas} con error al descontar inventario (se revirtió el estado de esas guías).`
+            )
+          }
+          alert(partes.join(' '))
+        } else {
+          const patch: Record<string, unknown> = {
+            estado: nuevoEstado,
+            actualizado_por: motorizadoId,
+          }
+
+          const { data, error } = await supabase
+            .from('guias')
+            .update(patch)
+            .in('id', validIds)
+            .eq('motorizado_asignado', motorizadoId)
+            .eq('estado', estadoOrigen)
+            .select('id')
+
+          if (error) throw error
+
+          const actualizadas = data?.length ?? 0
+          const omitidas = validIds.length - actualizadas
+
+          alert(
+            `Listo: ${actualizadas} actualizada(s).${
+              omitidas > 0
+                ? ` ${omitidas} no aplicada(s) (el estado cambió o ya no están asignadas a ti).`
+                : ''
+            }`
+          )
         }
-
-        const { data, error } = await supabase
-          .from('guias')
-          .update(patch)
-          .in('id', validIds)
-          .eq('motorizado_asignado', motorizadoId)
-          .eq('estado', estadoOrigen)
-          .select('id')
-
-        if (error) throw error
-
-        const actualizadas = data?.length ?? 0
-        const omitidas = validIds.length - actualizadas
-
-        alert(
-          `Listo: ${actualizadas} actualizada(s).${
-            omitidas > 0
-              ? ` ${omitidas} no aplicada(s) (el estado cambió o ya no están asignadas a ti).`
-              : ''
-          }`
-        )
 
         setIdsSeleccion(new Set())
         fetchContadores().then(setContadores)
@@ -886,7 +867,7 @@ export default function MisGuiasPage() {
         setMasivoCargando(false)
       }
     },
-    [user?.id, resumenSeleccionMasiva, fetchMisGuias, fetchContadores, fetchContadoresLocalidades]
+    [user?.id, guias, resumenSeleccionMasiva, fetchMisGuias, fetchContadores, fetchContadoresLocalidades]
   )
 
   const toggleSeleccionId = (id: string) => {
@@ -1147,7 +1128,7 @@ export default function MisGuiasPage() {
           )}
         </div>
 
-        {/* Selección y cambio masivo de estado (solo lógica, sin inventario) */}
+        {/* Selección y cambio masivo de estado */}
         {guias.length > 0 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3 space-y-3">
             <div className="flex flex-wrap items-center gap-3">
